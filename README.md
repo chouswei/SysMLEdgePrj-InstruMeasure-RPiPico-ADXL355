@@ -1,5 +1,5 @@
-# SysMLEdgePrj-InstruMeasure-RPiPico-ADXL355
-InstruMeasure: Raspberry Pi Pico + ADXL355B streaming raw XYZ to a PC over USB (SysMLEdge desk SSOT; sysml-models/ is backup)
+# SysMLEdgePrj-RPiPico-ADXL355
+Raspberry Pi Pico + ADXL355B streaming raw XYZ to a PC over USB (SysMLEdge desk SSOT; sysml-models/ is backup)
 
 Project title: "RPi Pico - ADXL2358" (typo kept as the title; the sensor is the ADXL355B, not the ADXL358).
 
@@ -10,4 +10,4 @@ Project title: "RPi Pico - ADXL2358" (typo kept as the title; the sensor is the 
 
 ## Lane
 
-InstruMeasure only. The owner merges every PR.
+The owner merges every PR.

@@ -1,5 +1,5 @@
 [project]
-name = "SysMLEdgePrj-InstruMeasure-RPiPico-ADXL355"
+name = "SysMLEdgePrj-RPiPico-ADXL355"
 title = "RPi Pico - ADXL2358"
 desk_project_id = "sysmledgeprj-instrumeasure-rpipico-adxl355"
 
