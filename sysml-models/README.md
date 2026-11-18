@@ -1,6 +1,6 @@
 # sysml-models (backup export)
 
-This tree is the **backup** of the SysMLEdge desk `sysmledgeprj-instrumeasure-rpipico-adxl355`. The desk graph is the working SSOT.
+This tree is the **backup** of the SysMLEdge desk `sysmledgeprj-rpipico-adxl355`. The desk graph is the working SSOT.
 
 - `models/`: exported ship files.
 - `applied/`: merged proposals (written by `mergeProposal` on the desk, then exported here).

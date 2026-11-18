@@ -1,4 +1,4 @@
-// Initial model: InstruMeasure "RPi Pico - ADXL2358" (title typo kept; the part is ADXL355B, not ADXL358).
+// Initial model: "RPi Pico - ADXL2358" (title typo kept; the part is ADXL355B, not ADXL358).
 // Only owner-confirmed facts (chat 2026-11-18 TPE: t1u, t1s1, t1s3, t1s4, t2u, t4u, t7u, t7s4, t8u)
 // and Fusion reads (fusion/summary.md, fusion/gsensor/summary.md). Every other number is TBD.
 

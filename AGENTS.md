@@ -1,9 +1,9 @@
-# Agent Config: InstruMeasure / RPi Pico - ADXL2358 (Pico355)
+# Agent Config: RPi Pico - ADXL2358 (Pico355)
 
 **Scope:** SysML modeling | Raspberry Pi Pico + Analog Devices ADXL355B raw XYZ streaming to a PC over USB  
-**Lane:** InstruMeasure only. Never Weft: no Weft repos, boards, libraries, or naming.  
+**Lane:** This project only. Never Weft: no Weft repos, boards, libraries, or naming.  
 **Layout:** standalone `SysMLEdgePrj-*` desk.  
-**Models:** bound working SSOT = SysMLEdge graph (`sysmledge` / `user-sysmledge`, `projectId` `sysmledgeprj-instrumeasure-rpipico-adxl355`); backup = `sysml-models/` (export PR after a human Save); tip MemNet = agent memory, not the graph.  
+**Models:** bound working SSOT = SysMLEdge graph (`sysmledge` / `user-sysmledge`, `projectId` `sysmledgeprj-rpipico-adxl355`); backup = `sysml-models/` (export PR after a human Save); tip MemNet = agent memory, not the graph.  
 **Product face:** Cursor MCP `sysmledge` after human-gated `openProject`. MUST NOT invent `projectId`. MUST NOT Foam.
 
 The project title keeps the typo "ADXL2358". The sensor is the **ADXL355B (ADXL355BEZ)**, digital output. It is **not** the ADXL358.
