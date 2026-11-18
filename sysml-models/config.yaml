@@ -1,0 +1,4 @@
+# Backup export of the SysMLEdge desk sysmledgeprj-instrumeasure-rpipico-adxl355.
+# Not SSOT. Filled by the export PR after a human Save on the desk.
+# Load order: root file last. No libs/ (ISQ and SI are preloaded on the desk).
+models: []

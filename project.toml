@@ -1,0 +1,8 @@
+[project]
+name = "SysMLEdgePrj-InstruMeasure-RPiPico-ADXL355"
+title = "RPi Pico - ADXL2358"
+desk_project_id = "sysmledgeprj-instrumeasure-rpipico-adxl355"
+
+[sysml]
+config = "sysml-models/config.yaml"
+models_dir = "sysml-models/models"
