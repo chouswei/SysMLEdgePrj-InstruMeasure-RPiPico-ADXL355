@@ -1,7 +1,7 @@
 [project]
 name = "SysMLEdgePrj-RPiPico-ADXL355"
 title = "RPi Pico - ADXL2358"
-desk_project_id = "sysmledgeprj-instrumeasure-rpipico-adxl355"
+desk_project_id = "sysmledgeprj-rpipico-adxl355"
 
 [sysml]
 config = "sysml-models/config.yaml"

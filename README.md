@@ -5,7 +5,7 @@ Project title: "RPi Pico - ADXL2358" (typo kept as the title; the sensor is the 
 
 ## Source of truth
 
-- The SysMLEdge desk `sysmledgeprj-instrumeasure-rpipico-adxl355` is the SSOT. Propose changes on the desk; the owner's Save updates the backup.
+- The SysMLEdge desk `sysmledgeprj-rpipico-adxl355` is the SSOT. Propose changes on the desk; the owner's Save updates the backup.
 - `sysml-models/` is a backup export, not the SSOT. `docs/` is not SSOT either.
 
 ## Lane
