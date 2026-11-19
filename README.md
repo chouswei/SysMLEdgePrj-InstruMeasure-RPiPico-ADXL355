@@ -14,7 +14,7 @@ The owner merges every PR.
 
 ## Build, flash and run
 
-Status: the firmware builds and the host tests pass, but the firmware cannot read the ADXL355B yet. Its register map is TODO(TBD) (`firmware/include/adxl355_regs.h`), so no sensor data flows until the TBD list below is decided.
+Status: the firmware builds and the host tests pass. The ADXL355B register map is filled from the Analog Devices no-OS driver (`firmware/include/adxl355_regs.h`, pinned commit, every value cited), but no sensor data flows until the other TBDs below (SPI clock and mode, frame layout, command set, state table) are decided and the sequences are tried on hardware.
 
 ### Firmware build (Pico SDK, CMake)
 
@@ -59,9 +59,9 @@ Run from the repository root. Each script exits non-zero on failure.
 
 ### Open TBD list
 
-Each item is a single-place placeholder with a `TODO(TBD)` comment. Do not fill one in without a source (model files, AGENTS.md or the ADXL355 datasheet Rev. D).
+Each item is a single-place placeholder with a `TODO(TBD)` comment. Do not fill one in without a source (model files, AGENTS.md, the ADXL355 datasheet Rev. D, or for ADXL355 registers the no-OS driver at the commit named in `adxl355_regs.h`).
 
-- ADXL355 register addresses, masks and bit fields: `firmware/include/adxl355_regs.h` (datasheet not reachable from the build box)
+- ADXL355 entries the no-OS driver does not define (`ADXL355_FIFO_CAPACITY`, post-reset delay and shadow compare): `firmware/include/adxl355_regs.h`, `docs/protocol.md`
 - SPI clock, SPI mode and FIFO watermark: `firmware/include/config.h`
 - Sensor supply, LDO output check (PICO355-R3): `firmware/include/config.h`
 - Sample buffer depth and overflow policy: `firmware/include/config.h`
