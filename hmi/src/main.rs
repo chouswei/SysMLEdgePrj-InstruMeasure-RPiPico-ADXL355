@@ -1,15 +1,16 @@
 //! pico355-hmi binary: argument parsing and wiring (PICO355-R8, PICO355-R9).
-//! HMI form TODO(TBD): placeholder is a plain terminal text view.
+//! HMI form TODO(TBD): placeholder is a plain terminal text view: one "x y z" raw-count line per sample.
+//! Usage: pico355-hmi --port COM5
 //! Log destination and format TODO(TBD): no log flag in the CLI contract yet, so samples go to a sink.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use pico355_hmi::config::HmiConfig;
+use pico355_hmi::config::{link as wire, HmiConfig};
 use pico355_hmi::link::{SerialTransport, Transport};
 use pico355_hmi::logger::Logger;
-use pico355_hmi::protocol::{decode_frame, encode_command, Command, Frame, ProtocolError};
-use pico355_hmi::{live_view, tbd};
+use pico355_hmi::live_view;
+use pico355_hmi::protocol::{decode_frame, encode_command, Command, Frame};
 
 const USAGE: &str = "usage: pico355-hmi [--port <path>] [--odr <hz>] [--help]";
 
@@ -95,30 +96,30 @@ fn run<T: Transport, W: Write, L: Write>(
                             writeln!(out, "response: {resp:?}")
                                 .map_err(|e| format!("output failed: {e}"))?;
                         }
+                        Frame::Command(_) => {} // the Pico never sends commands; ignore
                     }
                 }
-                Err(ProtocolError::Short) => break,
-                Err(ProtocolError::Sync(skip)) => {
-                    let skip = skip.max(1).min(pending.len());
-                    pending.drain(..skip);
-                }
-                Err(e) => return Err(format!("protocol error: {e}")),
+                // Short: wait for more bytes. Everything else: drop what the error says and rescan.
+                Err(e) => match e.skip() {
+                    None => break,
+                    Some(skip) => {
+                        pending.drain(..skip.min(pending.len()));
+                    }
+                },
             }
         }
     }
 }
 
-/// Send the configured settings. Only the ODR has a decided command code path; range and filter
-/// have no decided command encoding yet, so they stop here with the TBD error.
-fn apply_settings<T: Transport>(link: &mut T, cfg: &HmiConfig) -> Result<(), String> {
+/// Send the configured settings: the ODR (default 4000 Hz). Range and filter have command codes
+/// but no CLI flag and their HMI defaults stay TODO(TBD), so they are not sent.
+fn apply_settings<T: Transport>(port: &mut T, cfg: &HmiConfig) -> Result<(), String> {
     if cfg.range.is_some() || cfg.filter.is_some() {
-        return Err("range and filter commands TBD: no command encoding decided".to_string());
+        return Err("range and filter have no CLI flag yet (default range and filter TBD)".to_string());
     }
-    let code = tbd::PROTO_CMD_SET_ODR
-        .ok_or_else(|| "command set TBD (tbd::PROTO_CMD_SET_ODR): cannot set output data rate".to_string())?;
-    let frame = encode_command(&Command { code, value: cfg.odr_hz })
+    let frame = encode_command(&Command { code: wire::CMD_SET_ODR, value: cfg.odr_hz })
         .map_err(|e| format!("encode set-ODR command: {e}"))?;
-    link.write_all(&frame).map_err(|e| format!("write failed: {e}"))
+    port.write_all(&frame).map_err(|e| format!("write failed: {e}"))
 }
 
 fn usage_error(msg: &str) -> ExitCode {

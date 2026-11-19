@@ -9,7 +9,7 @@
  * Register values come from adxl355_regs.h, cited to the Analog Devices no-OS driver
  * (path + commit SHA in that header). Contract for every public function, checked in
  * this order:
- *   1. ADXL355_ERR_ARG: a NULL pointer, bus->transfer NULL, or a value out of
+ *   1. ADXL355_ERR_ARG: a NULL pointer, bus->transfer or bus->delay_ms NULL, or a value out of
  *      range (range not one of ADXL355_RANGE_2G/4G/8G, odr_hz not one of
  *      4000 2000 1000 500 250 125, filter not ADXL355_FILTER_UNSET or 0..ADXL355_HPF_CODE_MAX).
  *   2. ADXL355_ERR_TBD: a register entry (ADXL355_IS_TBD) the operation needs is
@@ -77,10 +77,14 @@ typedef struct {
 /**
  * Bus operations. transfer() asserts CSN, clocks len bytes out of tx and into rx
  * (rx may be NULL), releases CSN. Returns 0 on success, non-zero on failure.
+ * delay_ms() blocks for at least ms milliseconds; adxl355_init needs it for the
+ * post-soft-reset delay (CFG_ADXL355_RESET_DELAY_MS, cited: no-OS adxl355.c
+ * C:297-298 no_os_mdelay(1)); adxl355_init returns ADXL355_ERR_ARG if it is NULL.
  */
 typedef struct {
     int (*transfer)(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len);
     void *ctx;
+    void (*delay_ms)(void *ctx, uint32_t ms);
 } adxl355_bus_t;
 
 /** Driver instance; caller owns storage. */

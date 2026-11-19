@@ -206,7 +206,7 @@ static void init_cases(void)
     }
 
     /* NVM_BUSY never clears: gives up after 255 polls (no-OS C:274, C:288-295) */
-    mock_reset_state(); g_nvm_busy_polls = 100000; memset(&dev, 0, sizeof dev);
+    mock_reset_state(); g_delay_calls = 0; g_nvm_busy_polls = 100000; memset(&dev, 0, sizeof dev);
     CHECK(adxl355_init(&dev, &g_bus) == ADXL355_ERR_BUS && !dev.initialised);
     CHECK(g_status_reads == 255);
     CHECK(g_delay_calls == 0);           /* the delay follows a cleared NVM_BUSY only */

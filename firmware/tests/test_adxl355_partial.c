@@ -27,7 +27,8 @@ static int mock_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
     if (rx != NULL) for (i = 0; i < len; i++) rx[i] = 0;
     return 0;
 }
-static const adxl355_bus_t g_bus = { mock_transfer, NULL };
+static void mock_delay(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
+static const adxl355_bus_t g_bus = { mock_transfer, NULL, mock_delay };
 
 int main(void)
 {

@@ -12,6 +12,9 @@ fn cfg(name: &str) -> u64 {
         let mut it = line.split_whitespace();
         if it.next() == Some("#define") && it.next() == Some(name) {
             let v = it.next().unwrap_or_else(|| panic!("{name} has no value"));
+            if v.starts_with("CFG_") {
+                return cfg(v); // alias of another config.h macro
+            }
             let v = v.trim_end_matches(['u', 'U']);
             return match v.strip_prefix("0x") {
                 Some(h) => u64::from_str_radix(h, 16).unwrap(),
@@ -29,6 +32,7 @@ fn frame_constants_mirror_config_h() {
     assert_eq!(link::LENGTH_FIELD_BYTES as u64, cfg("CFG_PROTO_LENGTH_FIELD_BYTES"));
     assert_eq!(link::CHECKSUM_KIND as u64, cfg("CFG_PROTO_CHECKSUM_KIND"));
     assert_eq!(link::CHECKSUM_NONE as u64, cfg("CFG_PROTO_CHECKSUM_NONE"));
+    assert_eq!(link::CHECKSUM_CRC16 as u64, cfg("CFG_PROTO_CHECKSUM_CRC16"));
     assert_eq!(link::CHECKSUM_LEN_BYTES as u64, cfg("CFG_PROTO_CHECKSUM_LEN_BYTES"));
     assert_eq!(link::MAX_PAYLOAD as u64, cfg("CFG_PROTO_MAX_PAYLOAD"));
     assert_eq!(link::TYPE_SAMPLE_BATCH as u64, cfg("CFG_PROTO_TYPE_SAMPLE_BATCH"));

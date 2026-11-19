@@ -12,9 +12,10 @@
  * C:366-410, set_hpf_corner C:417-460, get_raw_xyz C:512-545, get_sts_reg
  * C:641-655, FIFO read C:705-740, sample conversion C:891-925.
  *
- * Not taken from no-OS (adxl355_bus_t has no delay hook and the driver keeps no
- * shadow-register baseline): the 1 ms delay and the shadow-register compare
- * after reset (no-OS C:297-308). TODO(TBD) owner decision if they are needed.
+ * The 1 ms post-reset delay is taken from no-OS C:297-298 (no_os_mdelay(1)) through the
+ * bus delay_ms hook, CFG_ADXL355_RESET_DELAY_MS, after NVM_BUSY clears and before the ID
+ * reads. Not taken from no-OS: the shadow-register compare after reset (no-OS C:300-308);
+ * the driver keeps no shadow-register baseline, the ID check below stands in for it.
  */
 #include "adxl355.h"
 #include "adxl355_regs.h"
@@ -133,7 +134,7 @@ adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus)
     unsigned retries;
     adxl355_rc_t rc;
 
-    if (dev == NULL || bus == NULL || bus->transfer == NULL) return ADXL355_ERR_ARG;
+    if (dev == NULL || bus == NULL || bus->transfer == NULL || bus->delay_ms == NULL) return ADXL355_ERR_ARG;
     dev->bus = bus;
     dev->config.odr_hz = CFG_DEFAULT_ODR_HZ;
     dev->config.range = CFG_DEFAULT_RANGE;
@@ -151,6 +152,9 @@ adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus)
         if ((status & (uint8_t)ADXL355_STATUS_NVM_BUSY) == 0) break;
     } while (--retries != 0u);
     if (retries == 0u) return ADXL355_ERR_BUS;
+
+    /* Delay between the soft reset and the next register read (cited: no-OS C:297-298). */
+    bus->delay_ms(bus->ctx, (uint32_t)CFG_ADXL355_RESET_DELAY_MS);
 
     /* ID check: DEVID_AD, DEVID_MST, PARTID against their reset values (no-OS C:137-160). */
     rc = reg_read(bus, (uint8_t)ADXL355_REG_DEVID_AD, &v, 1u);
