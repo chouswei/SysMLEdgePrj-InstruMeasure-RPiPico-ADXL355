@@ -3,7 +3,7 @@
  * Each settled item carries its label in config.h: "cited" (no-OS pin
  * 4557b1f58f8a233bd116dbb02d8d5c447d3699b6) or "design decision (2026-11-19, owner go t37u)" /
  * "design choice". This test only asserts the items are set and consistent; it does not
- * repeat their numbers. Items that stay TBD (hardware LDO, cable pinout, log format, FIFO watermark,
+ * repeat their numbers. Items that stay TBD (hardware LDO, cable pinout, log format,
  * default filter, overflow policy) keep their TBD sentinel here.
  */
 #include <stdio.h>
@@ -60,7 +60,9 @@ int main(void)
     CHECK(CFG_FSM_INITIAL_STATE != FSM_STATE_UNSET && CFG_FSM_UNKNOWN_EVENT_POLICY != FSM_POLICY_UNSET);
 
     /* still TBD on purpose */
-    CHECK(CFG_IS_TBD(CFG_FIFO_WATERMARK));
+    CHECK(!CFG_IS_TBD(CFG_FIFO_WATERMARK));   /* settled: design decision (owner t39u), range checked in test_fifo.c */
+    CHECK(!CFG_IS_TBD(CFG_FIFO_TRIGGER));
+    CHECK(CFG_SPI_CLOCK_HZ == 1000000u);      /* the SPI clock stays at the cited 1 MHz (no raise) */
     CHECK(CFG_IS_TBD(CFG_DEFAULT_FILTER));
     CHECK(CFG_IS_TBD(CFG_SAMPLE_BUFFER_OVERFLOW_POLICY));
 

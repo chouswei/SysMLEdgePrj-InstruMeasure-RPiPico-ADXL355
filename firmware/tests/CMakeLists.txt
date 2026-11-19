@@ -1,7 +1,7 @@
 # Standalone host test project (plain gcc, no Pico SDK): cmake -S firmware/tests -B <dir>
 # Compiles ../src/*.c except main.c into one module library, pico355_mods, on the REAL config.h
 # (no -D injection: the link settings and CFG_PROTO_* are settled, see docs/protocol.md).
-# ctest names: protocol sample_buffer adxl355 adxl355_tbd adxl355_partial acquisition usb_stream command fsm config
+# ctest names: protocol sample_buffer adxl355 adxl355_tbd adxl355_partial acquisition usb_stream command fsm config fifo fifo_labels
 cmake_minimum_required(VERSION 3.13)
 project(pico355_host_tests C)
 set(CMAKE_C_STANDARD 11)
@@ -70,3 +70,10 @@ pf_test(usb_stream      test_usb_stream.c      pico355_mods)
 pf_test(command         test_command.c         pico355_mods)
 pf_test(fsm             test_fsm.c             pico355_mods)
 pf_test(config          test_config.c          pico355_mods)
+pf_test(fifo            test_fifo.c            pico355_mods)
+
+# Labels and docs (C6, C7): the two FIFO design decisions are labelled in source and docs, and the
+# bandwidth section carries a verdict. grep on the real files, so a missing label fails here.
+set(DOCS_PROTO ${CMAKE_CURRENT_LIST_DIR}/../../docs/protocol.md)
+add_test(NAME fifo_labels COMMAND sh -c
+  "grep -E 'define CFG_FIFO_WATERMARK .*design decision \\(owner t39u\\)' ${FW_INC}/config.h && grep -E 'define CFG_FIFO_TRIGGER .*design decision \\(owner t39u\\)' ${FW_INC}/config.h && grep -c 'design decision (owner t39u)' ${DOCS_PROTO} | grep -qv '^[01]$' && grep -q 'FIFO drain bandwidth' ${DOCS_PROTO} && grep -Eq 'Verdict: 1 MHz (fits with margin|does not fit)' ${DOCS_PROTO}")
