@@ -132,7 +132,7 @@ after opening. Bytes sent before the port is opened are dropped, not queued.
   not fetched in this job). Worst framing uses 60 000 / 1 500 000 = **4 %** of the raw signalling rate,
   the designed framing 2.4 %; a margin of 25x or more, so no bulk-transfer ceiling is needed to call it feasible.
 - SPI side at 1 MHz: 36 000 B/s x 8 = 288 kbit/s of FIFO data, 29 % of the 1 Mbit/s clock, plus the drain
-  overhead worked out in "FIFO drain bandwidth" (about 36 % worst case). **Not measured on hardware**.
+  overhead worked out in "FIFO drain bandwidth" (29.8 % data plus drain; about 36 % if one poll per sample is added, an assumption, not a bound). **Not measured on hardware**.
 
 ## FIFO drain (SPI0 DMA)
 
@@ -166,8 +166,10 @@ cited is labelled design decision (owner t39u) and is not a part spec.
 - **Trigger** `CFG_FIFO_TRIGGER` = poll `FIFO_ENTRIES` against the watermark, evaluated on each DRDY GP22 high: design decision (owner t39u).
   The `FIFO_ENTRIES` read is needed for the drain length anyway; the DRDY gate of PICO355-R4 stays, so there is no bus
   traffic while DRDY is low. Rejected: drain on every DRDY (one drain per sample, no batching, the per-drain overhead repeated
-  4000 times a second), and drain on the `FIFO_FULL` flag (what the flag means relative to the watermark is not in the cited
-  no-OS files; it is not used). Not verified: how long DRDY stays high in FIFO mode. If it is a short pulse the loop could
+  4000 times a second), and drain on the `FIFO_FULL` flag. no-OS `README.rst:126` does define it: FIFO FULL fires when the FIFO entries equal the
+  `FIFO_SAMPLES` setting, clears when the entries fall below that after enough FIFO data is read, and can also clear on a STATUS
+  read when the entries are already below. DATA READY is cleared on a STATUS read (`README.rst:125`). The FIFO_FULL trigger is not
+  excluded by missing documentation; polling `FIFO_ENTRIES` on DRDY is kept as a design decision (owner t39u). Not verified: how long DRDY stays high in FIFO mode. If it is a short pulse the loop could
   look too late; the overflow count below is how a hardware run would show that.
 - **Overflow** (design decision (owner t39u)): after each drain `acq_step` reads STATUS once; a set `FIFO_OVR` (no-OS
   `adxl355_regs.h` `ADXL355_STATUS_FIFO_OVR`, H:222) adds 1 to `adxl355_t.fifo_overflows`, a 32-bit counter that saturates at
@@ -187,15 +189,20 @@ Wire time only, 8 clocks per byte, 1 MHz = 125 000 B/s:
 |---|---|---|
 | FIFO data, 4000 samples/s x 9 B | 36 000 B/s | 288 kbit/s |
 | Per drain (16 sets): `FIFO_ENTRIES` read 2 B + `FIFO_DATA` window 1 + 144 B + STATUS read 2 B = 149 B, 250 drains/s | 37 250 B/s | 298 kbit/s (29.8 %) |
-| Polls below the watermark, worst case one `FIFO_ENTRIES` read (2 B) per sample time, 3750/s | 7 500 B/s | 60 kbit/s |
-| Total worst case | 44 750 B/s | 358 kbit/s (35.8 %) |
+| Polls below the watermark, **assumption**: at most one `FIFO_ENTRIES` read (2 B) per sample time (DRDY pulses once per sample), 3750/s | 7 500 B/s | 60 kbit/s |
+| Total under that assumption (not a worst case) | 44 750 B/s | 358 kbit/s (35.8 %) |
 
-The one CS-low drain window is 145 B x 8 = 1.16 ms. Margin: 1 / 0.358 = about 2.8 times on wire time.
+Nothing enforces one poll per sample: `main.c` spins in a tight loop and `acq_step` polls whenever DRDY is high, and STATUS is
+read only after a drain (a STATUS read clears DATA READY, `README.rst:125`). If DRDY stays high between drains, the poll rate is
+the loop speed and the SPI load is unbounded (near saturated while waiting). The 29.8 % (data plus drain) is the firm wire-time number.
+
+The one CS-low drain window is 145 B x 8 = 1.16 ms. Margin on the firm number: 1 / 0.298 = about 3.4 times on wire time;
+under the one-poll assumption 1 / 0.358 = about 2.8 times.
 
 Not in the numbers (not measured, no hardware): gaps between transactions and CS timing, DMA setup per drain, main-loop and
 USB service time (the drain blocks while the RX channel runs; the 4 ms of FIFO room after the watermark must cover it).
 
-Verdict: 1 MHz fits with margin (wire time, about 36 % worst case). Not a hardware result. The clock is not raised; `CFG_SPI_CLOCK_HZ` stays the cited 1 000 000.
+Verdict: 1 MHz fits with margin (wire time, 29.8 % data plus drain; about 36 % only if DRDY pulses once per sample, otherwise the poll load is unbounded). Hardware check still open: measure the DRDY width (GP22) and the overflow count. Not a hardware result. The clock is not raised; `CFG_SPI_CLOCK_HZ` stays the cited 1 000 000.
 If a hardware run shows the overflow count rising, the first things to look at are the loop and USB time, not the SPI clock.
 
 ## Frame layout (design decision (2026-11-19, owner go t37u), not a part spec)
