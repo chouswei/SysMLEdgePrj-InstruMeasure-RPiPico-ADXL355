@@ -70,7 +70,20 @@ static int mock_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
     }
     return 0;
 }
-static const adxl355_bus_t g_bus = { mock_transfer, NULL };
+/* post-reset delay hook: records the milliseconds and where it fell in the transfer sequence */
+static int g_delay_calls;
+static uint32_t g_delay_ms;
+static int g_calls_at_delay;
+static int g_status_reads_at_delay;
+static void mock_delay(void *ctx, uint32_t ms)
+{
+    (void)ctx;
+    g_delay_calls++;
+    g_delay_ms = ms;
+    g_calls_at_delay = g_calls;
+    g_status_reads_at_delay = g_status_reads;
+}
+static const adxl355_bus_t g_bus = { mock_transfer, NULL, mock_delay };
 
 static adxl355_config_t good_cfg(void)
 {
@@ -84,7 +97,7 @@ static adxl355_config_t good_cfg(void)
 static void arg_cases(void)
 {
     adxl355_t dev;
-    adxl355_bus_t nobus = { NULL, NULL };
+    adxl355_bus_t nobus = { NULL, NULL, mock_delay };
     adxl355_config_t c = good_cfg();
     adxl355_sample_t smp = {0, 0, 0};
     adxl355_sample_t arr[2];
@@ -153,9 +166,15 @@ static void init_cases(void)
 
     /* success: reset code written to RESET, STATUS polled until NVM_BUSY clears, then the three IDs */
     mock_reset_state();
+    g_delay_calls = 0; g_delay_ms = 0;
     g_nvm_busy_polls = 3;
     memset(&dev, 0, sizeof dev);
     CHECK(adxl355_init(&dev, &g_bus) == ADXL355_OK);
+    /* post-reset delay (cited: no-OS adxl355.c C:297-298 no_os_mdelay(1)): once, CFG_ADXL355_RESET_DELAY_MS,
+     * after NVM_BUSY cleared (4th STATUS read) and before the first ID read */
+    CHECK(!CFG_IS_TBD(CFG_ADXL355_RESET_DELAY_MS));
+    CHECK(g_delay_calls == 1 && g_delay_ms == (uint32_t)CFG_ADXL355_RESET_DELAY_MS);
+    CHECK(g_status_reads_at_delay == 4 && g_calls_at_delay == 1 + 4);
     CHECK(dev.initialised);
     CHECK(dev.bus == &g_bus);
     CHECK(dev.config.odr_hz == CFG_DEFAULT_ODR_HZ && dev.config.range == CFG_DEFAULT_RANGE);
@@ -179,10 +198,18 @@ static void init_cases(void)
         g_fail_at = at;
     }
 
+    /* no delay hook: refused up front, the sensor is not touched */
+    {
+        adxl355_bus_t nodelay = { mock_transfer, NULL, NULL };
+        mock_reset_state(); memset(&dev, 0, sizeof dev);
+        CHECK(adxl355_init(&dev, &nodelay) == ADXL355_ERR_ARG && g_calls == 0);
+    }
+
     /* NVM_BUSY never clears: gives up after 255 polls (no-OS C:274, C:288-295) */
     mock_reset_state(); g_nvm_busy_polls = 100000; memset(&dev, 0, sizeof dev);
     CHECK(adxl355_init(&dev, &g_bus) == ADXL355_ERR_BUS && !dev.initialised);
     CHECK(g_status_reads == 255);
+    CHECK(g_delay_calls == 0);           /* the delay follows a cleared NVM_BUSY only */
 }
 
 static void run_init(adxl355_t *dev)

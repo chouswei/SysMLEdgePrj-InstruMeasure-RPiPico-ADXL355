@@ -1,11 +1,10 @@
-//! PH route checks for hmi/src/link.rs. Transport is exercised through an in-memory
-//! mock only; no real serial port is opened. While tbd::SERIAL_BAUD is None,
-//! SerialTransport::open returns LinkError::Tbd before touching any port.
+//! Route checks for hmi/src/link.rs. Transport is exercised through an in-memory mock;
+//! the only real open is of a path that does not exist, which must fail as a serial error
+//! (serial settings are decided: design decision 2026-11-19, owner go t37u).
 use std::io;
 
 use pico355_hmi::link::{LinkError, SerialTransport, Transport};
-use pico355_hmi::protocol::{decode_frame, ProtocolError};
-use pico355_hmi::tbd;
+use pico355_hmi::protocol::{decode_frame, Frame, Response};
 
 #[derive(Default)]
 struct MockTransport {
@@ -40,19 +39,23 @@ fn mock_transport_satisfies_the_trait_contract() {
 }
 
 #[test]
-fn bytes_from_mock_transport_decode_to_tbd_error() {
-    let mut t = MockTransport { to_read: vec![0xAA; 16], ..Default::default() };
-    let mut buf = [0u8; 16];
+fn golden_bytes_from_mock_transport_decode_to_the_response() {
+    // GOLDEN RESP_ACK, same bytes as hmi/tests/golden.rs
+    let golden = vec![0xa5u8, 0x03, 0x06, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x0e, 0xbc];
+    let mut t = MockTransport { to_read: golden.clone(), ..Default::default() };
+    let mut buf = [0u8; 32];
     let n = t.read(&mut buf).unwrap();
-    assert_eq!(decode_frame(&buf[..n]).map(|(_, c)| c), Err(ProtocolError::Tbd));
+    assert_eq!(
+        decode_frame(&buf[..n]).unwrap(),
+        (Frame::Response(Response { code: 1, cmd_code: 1, value: 0 }), golden.len())
+    );
 }
 
 #[test]
-fn open_returns_tbd_while_serial_settings_are_tbd() {
-    assert!(tbd::SERIAL_BAUD.is_none());
+fn open_of_a_missing_port_is_a_serial_error_not_tbd() {
     match SerialTransport::open("/nonexistent/pico355-test-port") {
-        Err(LinkError::Tbd) => {}
-        Err(other) => panic!("expected LinkError::Tbd, got {other:?}"),
-        Ok(_) => panic!("expected LinkError::Tbd, got Ok"),
+        Err(LinkError::Serial(_)) => {}
+        Err(other) => panic!("expected LinkError::Serial, got {other:?}"),
+        Ok(_) => panic!("expected an error opening a missing port"),
     }
 }

@@ -1,11 +1,7 @@
 /*
- * test_command.c - host test for firmware/src/command.c (PICO355-R6, PICO355-R2).
- * Two builds (CMakeLists.txt): command (command set TBD) and command_inject
- * (-D test data for CFG_PROTO_*, never the real command set: mechanics only).
- * command.h: while a CFG_PROTO_CMD_* / CFG_PROTO_RESP_* value is TBD, command_parse and
- * command_apply return COMMAND_ERR_TBD, call no adxl355 or fsm function, and command_apply
- * zeroes *resp. A lower-module TBD (adxl355 / protocol) propagates as COMMAND_ERR_TBD
- * (docs/protocol.md TBD rule 3).
+ * test_command.c - host test for firmware/src/command.c on the REAL config.h command set
+ * (PICO355-R6, PICO355-R2). The mock sensor is an initialised adxl355_t over a bus that
+ * accepts every transfer; the fsm table is test data, not the design's table.
  */
 #include <stdio.h>
 #include <string.h>
@@ -16,37 +12,6 @@
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
 
-#define ANY_TBD (CFG_IS_TBD(CFG_PROTO_SYNC) || CFG_IS_TBD(CFG_PROTO_HEADER_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_FIELD_BYTES) || CFG_IS_TBD(CFG_PROTO_CHECKSUM_KIND) || \
-                 CFG_IS_TBD(CFG_PROTO_MAX_PAYLOAD) || CFG_IS_TBD(CFG_PROTO_TYPE_SAMPLE_BATCH) || \
-                 CFG_IS_TBD(CFG_PROTO_TYPE_COMMAND) || CFG_IS_TBD(CFG_PROTO_TYPE_RESPONSE) || \
-                 CFG_IS_TBD(CFG_PROTO_SYNC_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_TYPE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_MSB_FIRST) || \
-                 CFG_IS_TBD(CFG_PROTO_PAD_BYTE) || \
-                 CFG_IS_TBD(CFG_PROTO_CHECKSUM_NONE) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_PAYLOAD_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_PAYLOAD_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_CMD_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_VALUE_MSB_FIRST) || \
-                 CFG_IS_TBD(CFG_PROTO_SAMPLE_AXIS_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_SAMPLE_MSB_FIRST) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_SET_ODR) || CFG_IS_TBD(CFG_PROTO_CMD_SET_RANGE) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_SET_FILTER) || CFG_IS_TBD(CFG_PROTO_RESP_ACK) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_ERROR) || CFG_IS_TBD(CFG_PROTO_RESP_STATUS))
-
-#ifdef PF_REQUIRE_INJECT
-#if ANY_TBD
-#error "command_inject target must define every CFG_PROTO_* as test data"
-#endif
-#endif
 
 static int g_calls;
 static int mock_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
@@ -60,7 +25,8 @@ static const adxl355_bus_t g_bus = { mock_transfer, NULL };
 /* test data: a made-up table, not the design's transition table */
 static const fsm_transition_t g_tab[] = {
     { FSM_STATE_IDLE, FSM_EV_CONFIG_COMMAND, FSM_STATE_CONFIGURING },
-    { FSM_STATE_CONFIGURING, FSM_EV_CONFIG_DONE, FSM_STATE_IDLE }
+    { FSM_STATE_CONFIGURING, FSM_EV_CONFIG_DONE, FSM_STATE_IDLE },
+    { FSM_STATE_CONFIGURING, FSM_EV_CONFIG_FAILED, FSM_STATE_IDLE }
 };
 
 typedef struct { adxl355_t dev; adxl355_config_t cfg; fsm_t fsm; command_ctx_t ctx; } rig_t;
@@ -69,10 +35,11 @@ static void rig_init(rig_t *r)
 {
     memset(r, 0, sizeof *r);
     r->dev.bus = &g_bus;
-    r->cfg.odr_hz = 1234u;           /* test data */
+    r->dev.initialised = true;       /* mock bus accepts everything */
+    r->cfg.odr_hz = 4000u;           /* valid ODR */
     r->cfg.range = ADXL355_RANGE_4G;
     r->cfg.filter = 3;
-    CHECK(fsm_init(&r->fsm, g_tab, 2, FSM_STATE_IDLE, FSM_POLICY_IGNORE) == FSM_OK);
+    CHECK(fsm_init(&r->fsm, g_tab, 3, FSM_STATE_IDLE, FSM_POLICY_IGNORE) == FSM_OK);
     r->ctx.dev = &r->dev; r->ctx.config = &r->cfg; r->ctx.fsm = &r->fsm;
     g_calls = 0;
 }
@@ -93,26 +60,6 @@ static void args(void)
     CHECK(g_calls == 0);
 }
 
-#if ANY_TBD
-static void tbd_state(void)
-{
-    rig_t r;
-    protocol_command_t cmd = {1, 2}, out = {9, 9};
-    protocol_response_t resp;
-    uint8_t pay[4] = {1, 2, 3, 4};
-
-    rig_init(&r);
-    CHECK(command_parse(pay, sizeof pay, &out) == COMMAND_ERR_TBD);
-    CHECK(out.code == 9 && out.value == 9);
-
-    memset(&resp, 0xAA, sizeof resp);
-    CHECK(command_apply(&r.ctx, &cmd, &resp) == COMMAND_ERR_TBD);
-    CHECK(resp.code == 0 && resp.cmd_code == 0 && resp.value == 0);
-    CHECK(g_calls == 0);                                   /* no adxl355 call */
-    CHECK(fsm_state(&r.fsm) == FSM_STATE_IDLE);            /* no fsm call */
-    CHECK(r.cfg.odr_hz == 1234u && r.cfg.range == ADXL355_RANGE_4G && r.cfg.filter == 3);
-}
-#else
 static void mechanics(void)
 {
     rig_t r;
@@ -142,23 +89,53 @@ static void mechanics(void)
     }
     CHECK(command_apply(&r.ctx, &unknown, &resp) == COMMAND_ERR_UNKNOWN);
 
-#if ADXL355_REGS_ARE_TBD
-    /* driver registers still TBD: the sensor's TBD propagates, config unchanged, no bus traffic */
-    CHECK(command_apply(&r.ctx, &cmd, &resp) == COMMAND_ERR_TBD);
-    CHECK(r.cfg.odr_hz == 1234u && r.cfg.range == ADXL355_RANGE_4G && r.cfg.filter == 3);
-    CHECK(g_calls == 0);
-#endif
 }
-#endif
+
+/* C7: every command of the set is applied, answered with ACK (code + answered cmd) and stored */
+static void apply_set(void)
+{
+    rig_t r;
+    protocol_response_t resp;
+    protocol_command_t odr = {(uint8_t)CFG_PROTO_CMD_SET_ODR, 2000u};
+    protocol_command_t rng = {(uint8_t)CFG_PROTO_CMD_SET_RANGE, (uint32_t)ADXL355_RANGE_8G};
+    protocol_command_t flt = {(uint8_t)CFG_PROTO_CMD_SET_FILTER, 2u};
+
+    rig_init(&r);
+    CHECK(command_apply(&r.ctx, &odr, &resp) == COMMAND_OK);
+    CHECK(resp.code == (uint8_t)CFG_PROTO_RESP_ACK && resp.cmd_code == odr.code && r.cfg.odr_hz == 2000u);
+    CHECK(command_apply(&r.ctx, &rng, &resp) == COMMAND_OK);
+    CHECK(resp.code == (uint8_t)CFG_PROTO_RESP_ACK && resp.cmd_code == rng.code && r.cfg.range == ADXL355_RANGE_8G);
+    CHECK(command_apply(&r.ctx, &flt, &resp) == COMMAND_OK);
+    CHECK(resp.code == (uint8_t)CFG_PROTO_RESP_ACK && resp.cmd_code == flt.code && r.cfg.filter == 2);
+    CHECK(fsm_state(&r.fsm) == FSM_STATE_IDLE);
+}
+
+/* a refused command is answered with RESP_ERROR and leaves the stored config alone */
+static void apply_refused(void)
+{
+    rig_t r;
+    protocol_response_t resp;
+    protocol_command_t odr0 = {(uint8_t)CFG_PROTO_CMD_SET_ODR, 0u};
+    protocol_command_t odr_bad = {(uint8_t)CFG_PROTO_CMD_SET_ODR, 1234u};   /* not a supported ODR */
+    protocol_command_t rng_bad = {(uint8_t)CFG_PROTO_CMD_SET_RANGE, 99u};
+    protocol_command_t flt_bad = {(uint8_t)CFG_PROTO_CMD_SET_FILTER, 7u};   /* above HPF code max */
+    const protocol_command_t *bad[] = {&odr0, &odr_bad, &rng_bad, &flt_bad};
+    size_t i;
+
+    for (i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        rig_init(&r);
+        CHECK(command_apply(&r.ctx, bad[i], &resp) != COMMAND_OK);
+        CHECK(resp.code == (uint8_t)CFG_PROTO_RESP_ERROR && resp.cmd_code == bad[i]->code);
+        CHECK(r.cfg.odr_hz == 4000u && r.cfg.range == ADXL355_RANGE_4G && r.cfg.filter == 3);
+    }
+}
 
 int main(void)
 {
     args();
-#if ANY_TBD
-    tbd_state();
-#else
     mechanics();
-#endif
+    apply_set();
+    apply_refused();
     if (g_fail) { printf("test_command: %d check(s) failed\n", g_fail); return 1; }
     printf("test_command: ok\n");
     return 0;
