@@ -6,18 +6,22 @@
  * Boot: SPI0 up (GP16/17/18/19, CFG_SPI_CLOCK_HZ, CFG_SPI_MODE, MSB first; cited no-OS pin
  * 4557b1f58f8a233bd116dbb02d8d5c447d3699b6 projects/eval-adxl355-pmdz), sensor reset with the
  * cited 1 ms delay, configure CFG_DEFAULT_ODR_HZ / CFG_DEFAULT_RANGE, start measuring, then
- * stream sample-batch frames over USB CDC; command frames from the PC are answered.
+ * stream sample-batch frames over USB CDC; command frames from the PC are answered. The ADXL355 FIFO is
+ * drained over SPI0 by RP2040 DMA (bus_fifo_read, pattern of pico-examples spi/spi_dma/spi_dma.c), FIFO_SAMPLES
+ * watermark CFG_FIFO_WATERMARK (design decision (owner t39u)) written before measuring starts.
  * Not run on hardware by the author: see the PR (host round trip only).
  */
 #include <stdio.h>
 #include <string.h>
 
+#include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
 #include "pico/stdlib.h"
 
 #include "acquisition.h"
 #include "adxl355.h"
+#include "adxl355_regs.h"
 #include "command.h"
 #include "config.h"
 #include "fsm.h"
@@ -39,6 +43,41 @@ static int bus_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
     }
     gpio_put(CFG_PIN_SPI0_CSN, 1);
     return (n == (int)len) ? 0 : -1;
+}
+
+/* FIFO drain on SPI0 DMA (pattern: pico-examples spi/spi_dma/spi_dma.c:59-85). One CS-low window of len bytes:
+ * TX channel repeats one byte (the FIFO_DATA read byte, read_increment false), RX channel stores every byte in rx
+ * (write_increment true, rx[0] is the dummy clocked with the command byte); both are started together with
+ * dma_start_channel_mask. Blocking: waits for the RX channel, then the TX channel. Not run on hardware by the author. */
+static uint g_dma_tx;
+static uint g_dma_rx;
+static uint8_t g_dma_tx_byte;
+
+static int bus_fifo_read(void *ctx, uint8_t tx_byte, uint8_t *rx, size_t len)
+{
+    spi_inst_t *spi = (spi_inst_t *)ctx;
+    dma_channel_config c;
+    g_dma_tx_byte = tx_byte;
+
+    c = dma_channel_get_default_config(g_dma_tx);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_dreq(&c, spi_get_dreq(spi, true));
+    channel_config_set_read_increment(&c, false);
+    dma_channel_configure(g_dma_tx, &c, &spi_get_hw(spi)->dr, &g_dma_tx_byte, (uint)len, false);
+
+    c = dma_channel_get_default_config(g_dma_rx);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
+    channel_config_set_dreq(&c, spi_get_dreq(spi, false));
+    channel_config_set_read_increment(&c, false);
+    channel_config_set_write_increment(&c, true);
+    dma_channel_configure(g_dma_rx, &c, rx, &spi_get_hw(spi)->dr, (uint)len, false);
+
+    gpio_put(CFG_PIN_SPI0_CSN, 0);
+    dma_start_channel_mask((1u << g_dma_tx) | (1u << g_dma_rx));
+    dma_channel_wait_for_finish_blocking(g_dma_rx);
+    dma_channel_wait_for_finish_blocking(g_dma_tx);
+    gpio_put(CFG_PIN_SPI0_CSN, 1);
+    return 0;
 }
 
 static bool drdy_read(void *ctx)
@@ -79,6 +118,9 @@ static size_t cdc_read(void *ctx, uint8_t *buf, size_t cap)
 
 #if CFG_IS_TBD(CFG_SPI_CLOCK_HZ) || CFG_IS_TBD(CFG_SPI_MODE)
 #error "SPI clock and mode must be set in config.h (cited: no-OS pin projects/eval-adxl355-pmdz)"
+#endif
+#if CFG_IS_TBD(CFG_FIFO_WATERMARK) || CFG_FIFO_WATERMARK > ADXL355_FIFO_SAMPLES_MAX
+#error "CFG_FIFO_WATERMARK must be set in config.h and not above ADXL355_FIFO_SAMPLES_MAX"
 #endif
 
 static void pins_init(void)
@@ -142,14 +184,18 @@ static void rx_poll(command_ctx_t *cmd_ctx)
 int main(void)
 {
     static const adxl355_bus_t bus = { bus_transfer, NULL, bus_delay_ms };
+    static adxl355_fifo_hal_t fifo_hal = { bus_fifo_read, NULL };
     static const acq_hal_t acq_hal = { drdy_read, NULL };
     static const usb_stream_hal_t usb_hal = { cdc_write, cdc_read, NULL };
 
     stdio_init_all();
     pins_init();
+    g_dma_tx = dma_claim_unused_channel(true);
+    g_dma_rx = dma_claim_unused_channel(true);
 
     adxl355_bus_t bus_bound = bus;
     bus_bound.ctx = PICO355_SPI;
+    fifo_hal.ctx = PICO355_SPI;
 
     (void)fsm_init_default(&g_fsm);   /* IDLE: config.h transition table (design decision) */
     (void)sample_buffer_init(&g_buf);
@@ -161,12 +207,15 @@ int main(void)
     /* Sensor bring-up: soft reset + 1 ms delay + ID check (adxl355_init), configure, start measuring.
      * A failure leaves the fsm in IDLE: nothing streams, commands are answered with an error. */
     adxl355_rc_t dev_rc = adxl355_init(&g_dev, &bus_bound);
+    (void)adxl355_set_fifo_hal(&g_dev, &fifo_hal);   /* init clears the hook; DMA drain from here on */
     (void)acq_init(&g_acq, &acq_hal, &g_dev, &g_buf);
     (void)usb_stream_init(&g_usb, &usb_hal, g_frame_buf, sizeof g_frame_buf);
     if (dev_rc == ADXL355_OK) {
         fsm_state_t st;
         (void)fsm_dispatch(&g_fsm, FSM_EV_CONFIG_COMMAND, &st);
-        if (adxl355_configure(&g_dev, &g_cfg) == ADXL355_OK && adxl355_set_measuring(&g_dev, true) == ADXL355_OK)
+        if (adxl355_configure(&g_dev, &g_cfg) == ADXL355_OK &&
+            adxl355_set_fifo_watermark(&g_dev, (uint8_t)CFG_FIFO_WATERMARK) == ADXL355_OK &&
+            adxl355_set_measuring(&g_dev, true) == ADXL355_OK)
             (void)fsm_dispatch(&g_fsm, FSM_EV_CONFIG_DONE, &st);
         else
             (void)fsm_dispatch(&g_fsm, FSM_EV_CONFIG_FAILED, &st);

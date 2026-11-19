@@ -18,8 +18,8 @@ fn every_command_round_trips() {
 
 #[test]
 fn command_codes_are_distinct() {
-    let c = [link::CMD_SET_ODR, link::CMD_SET_RANGE, link::CMD_SET_FILTER];
-    assert!(c[0] != c[1] && c[1] != c[2] && c[0] != c[2]);
+    let c = [link::CMD_SET_ODR, link::CMD_SET_RANGE, link::CMD_SET_FILTER, link::CMD_GET_STATUS];
+    for i in 0..c.len() { for j in (i + 1)..c.len() { assert!(c[i] != c[j]); } }
     let r = [link::RESP_ACK, link::RESP_ERROR, link::RESP_STATUS];
     assert!(r[0] != r[1] && r[1] != r[2] && r[0] != r[2]);
 }

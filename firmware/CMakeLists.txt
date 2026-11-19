@@ -27,8 +27,8 @@ target_compile_options(pico355_fw PRIVATE -Wall -Wextra)
 # (adxl355.c: 288 B read buffer + 2 x 289 B transfer buffers) sit on the stack.
 target_compile_definitions(pico355_fw PRIVATE PICO_STACK_SIZE=0x1000)
 
-# main.c is the only user of SDK headers: SPI0, GPIO and USB CDC (via stdio over USB).
-target_link_libraries(pico355_fw PRIVATE pico_stdlib hardware_spi hardware_gpio)
+# main.c is the only user of SDK headers: SPI0 + DMA (FIFO drain), GPIO and USB CDC (via stdio over USB).
+target_link_libraries(pico355_fw PRIVATE pico_stdlib hardware_spi hardware_gpio hardware_dma)
 
 pico_enable_stdio_usb(pico355_fw 1)
 pico_enable_stdio_uart(pico355_fw 0)

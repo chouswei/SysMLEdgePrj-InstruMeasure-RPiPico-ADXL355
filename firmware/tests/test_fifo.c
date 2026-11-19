@@ -83,8 +83,8 @@ static int mock_fifo_read(void *ctx, uint8_t tx_byte, uint8_t *rx, size_t len)
 
 static void mock_delay(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
 
-static const adxl355_bus_t g_bus_hook = { mock_transfer, NULL, mock_delay, mock_fifo_read };
-static const adxl355_bus_t g_bus_plain = { mock_transfer, NULL, mock_delay, NULL };
+static const adxl355_bus_t g_bus = { mock_transfer, NULL, mock_delay };
+static const adxl355_fifo_hal_t g_hal = { mock_fifo_read, NULL };
 
 static void put_entry(size_t k, int32_t v, bool x_marker, bool empty)
 {
@@ -102,10 +102,13 @@ static void put_set(size_t k, int32_t base)
     put_entry(k + 2, base + 2, false, false);
 }
 
-static void init_dev(adxl355_t *dev, const adxl355_bus_t *bus)
+/* hook true: the DMA hook is bound after init (init clears it); false: no hook, transfer() fallback */
+static void init_dev(adxl355_t *dev, bool hook)
 {
     mock_reset();
-    CHECK(adxl355_init(dev, bus) == ADXL355_OK);
+    CHECK(adxl355_init(dev, &g_bus) == ADXL355_OK);
+    CHECK(dev->fifo_hal == NULL);
+    if (hook) CHECK(adxl355_set_fifo_hal(dev, &g_hal) == ADXL355_OK);
 }
 
 /* ---- C1 marker alignment ---- */
@@ -177,7 +180,7 @@ static void c3_empty(void)
     put_set(3, 80);
     CHECK(adxl355_fifo_parse(g_stream, 6, out, 4, &n) == ADXL355_OK && n == 1 && out[0].x == 80);
     /* FIFO_ENTRIES = 0: no DMA/FIFO transfer, no sample, no error */
-    init_dev(&dev, &g_bus_hook);
+    init_dev(&dev, true);
     g_reg[ADXL355_REG_FIFO_ENTRIES] = 0;
     n = 99;
     CHECK(adxl355_read_fifo(&dev, out, 4, &n) == ADXL355_OK && n == 0);
@@ -190,7 +193,7 @@ static void c4_overflow(void)
     adxl355_t dev;
     uint8_t st = 0;
     uint32_t i;
-    init_dev(&dev, &g_bus_plain);
+    init_dev(&dev, false);
     CHECK(dev.fifo_overflows == 0u);
     g_reg[ADXL355_REG_STATUS] = ADXL355_STATUS_DATA_RDY;
     CHECK(adxl355_status(&dev, &st) == ADXL355_OK && dev.fifo_overflows == 0u);   /* clear: unchanged */
@@ -209,7 +212,7 @@ static void c4_overflow(void)
     g_reg[ADXL355_REG_STATUS] = ADXL355_STATUS_FIFO_OVR;
     CHECK(adxl355_status(&dev, &st) == ADXL355_OK && dev.fifo_overflows == 0xFFFFFFFFu);
     /* re-init clears the count */
-    CHECK(adxl355_init(&dev, &g_bus_plain) == ADXL355_OK && dev.fifo_overflows == 0u);
+    CHECK(adxl355_init(&dev, &g_bus) == ADXL355_OK && dev.fifo_overflows == 0u);
 }
 
 /* status response: a GET_STATUS command returns RESP_STATUS carrying the count, streaming is not interrupted */
@@ -226,7 +229,7 @@ static void c4_status_response(void)
     size_t len = 0, used = 0;
     fsm_state_t st;
 
-    init_dev(&dev, &g_bus_plain);
+    init_dev(&dev, false);
     dev.fifo_overflows = 0x01020304u;
     cfg = dev.config;
     CHECK(fsm_init_default(&fsm) == FSM_OK);
@@ -258,7 +261,7 @@ static void c5_capacity(void)
     CHECK(ADXL355_FIFO_CAPACITY == 96);
     CHECK(ADXL355_FIFO_CAPACITY / 3 == 32);
     /* a FIFO_ENTRIES reading above capacity never makes the drain longer than 96 entries */
-    init_dev(&dev, &g_bus_hook);
+    init_dev(&dev, true);
     g_reg[ADXL355_REG_FIFO_ENTRIES] = 0xFF;
     for (k = 0; k < 32; k++) put_set(3 * k, (int32_t)(3 * k));
     g_stream_len = 3 * 96;
@@ -284,7 +287,8 @@ static void c6_watermark(void)
     adxl355_t dev;
     adxl355_sample_t out[40];
     size_t n = 99, k;
-    init_dev(&dev, &g_bus_hook);
+    init_dev(&dev, true);
+    g_wr = 0;   /* init wrote RESET */
     CHECK(adxl355_set_fifo_watermark(&dev, (uint8_t)(ADXL355_FIFO_SAMPLES_MAX + 1u)) == ADXL355_ERR_ARG);
     CHECK(g_wr == 0);
     CHECK(adxl355_set_fifo_watermark(&dev, 48) == ADXL355_OK);
@@ -310,7 +314,7 @@ static void c8_length(void)
     size_t ci;
     for (ci = 0; ci < sizeof cases; ci++) {
         entries = cases[ci];
-        init_dev(&dev, &g_bus_hook);
+        init_dev(&dev, true);
         for (k = 0; k < 32; k++) put_set(3 * k, (int32_t)(3 * k));
         g_stream_len = 3u * 96u;
         g_reg[ADXL355_REG_FIFO_ENTRIES] = entries;
@@ -324,7 +328,7 @@ static void c8_length(void)
         CHECK(out[0].x == 0);                        /* the dummy byte (0xEE) never leaks into a sample */
     }
     /* FIFO_ENTRIES not a multiple of 3: whole sets only, the tail stays in the FIFO (no-OS C:714) */
-    init_dev(&dev, &g_bus_hook);
+    init_dev(&dev, true);
     for (k = 0; k < 32; k++) put_set(3 * k, (int32_t)(3 * k));
     g_stream_len = 3u * 96u;
     g_reg[ADXL355_REG_FIFO_ENTRIES] = 7;
@@ -333,7 +337,7 @@ static void c8_length(void)
     g_reg[ADXL355_REG_FIFO_ENTRIES] = 48;
     CHECK(adxl355_read_fifo(&dev, out, 4, &n) == ADXL355_OK && n == 4 && g_hook_len == 1u + 36u);
     /* non-DMA fallback: no hook, one transfer(), tx is the FIFO_DATA read byte repeated, same length */
-    init_dev(&dev, &g_bus_plain);
+    init_dev(&dev, false);
     for (k = 0; k < 32; k++) put_set(3 * k, (int32_t)(3 * k));
     g_stream_len = 3u * 96u;
     g_reg[ADXL355_REG_FIFO_ENTRIES] = 48;

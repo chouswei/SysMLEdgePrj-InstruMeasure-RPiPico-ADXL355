@@ -9,14 +9,15 @@
 static bool cmd_codes_tbd(void)
 {
     return CFG_IS_TBD(CFG_PROTO_CMD_SET_ODR) || CFG_IS_TBD(CFG_PROTO_CMD_SET_RANGE) ||
-           CFG_IS_TBD(CFG_PROTO_CMD_SET_FILTER);
+           CFG_IS_TBD(CFG_PROTO_CMD_SET_FILTER) || CFG_IS_TBD(CFG_PROTO_CMD_GET_STATUS);
 }
 
 static bool cmd_code_known(uint8_t code)
 {
     return code == (uint8_t)CFG_PROTO_CMD_SET_ODR ||
            code == (uint8_t)CFG_PROTO_CMD_SET_RANGE ||
-           code == (uint8_t)CFG_PROTO_CMD_SET_FILTER;
+           code == (uint8_t)CFG_PROTO_CMD_SET_FILTER ||
+           code == (uint8_t)CFG_PROTO_CMD_GET_STATUS;
 }
 
 static void resp_set(protocol_response_t *resp, uint8_t code, uint8_t cmd_code, uint32_t value)
@@ -92,6 +93,14 @@ command_rc_t command_apply(command_ctx_t *ctx, const protocol_command_t *cmd, pr
     if (!cmd_code_known(cmd->code)) {
         resp_set(resp, (uint8_t)CFG_PROTO_RESP_ERROR, cmd->code, (uint32_t)COMMAND_ERR_UNKNOWN);
         return COMMAND_ERR_UNKNOWN;
+    }
+
+    /* Status query (design decision (owner t39u)): answered from the driver counter, no configuration change,
+     * no fsm event (streaming continues), no sensor traffic. value = FIFO_OVR observations, u32 saturating. */
+    if (cmd->code == (uint8_t)CFG_PROTO_CMD_GET_STATUS) {
+        if (CFG_IS_TBD(CFG_PROTO_RESP_STATUS)) return COMMAND_ERR_TBD;
+        resp_set(resp, (uint8_t)CFG_PROTO_RESP_STATUS, cmd->code, ctx->dev->fifo_overflows);
+        return COMMAND_OK;
     }
 
     next = *ctx->config;

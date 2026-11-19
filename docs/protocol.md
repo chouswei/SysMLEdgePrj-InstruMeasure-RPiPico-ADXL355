@@ -9,7 +9,7 @@ marked TBD below is a "not configured" sentinel in code until the owner decides 
 
 | Kind | Firmware sentinel | Test | Rust mirror |
 |---|---|---|---|
-| numeric `CFG_*` still open (FIFO watermark, default filter, overflow policy; SPI clock/mode and every `CFG_PROTO_*` are now settled, see "Settled link values") | `CFG_TBD` = `0xFFFFFFFFFFFFFFFFull` | `CFG_IS_TBD(x)` (C and `#if`) | `Option<T>` = `None` (`tbd.rs`, the open HMI items) |
+| numeric `CFG_*` still open (default filter, buffer overflow policy; SPI clock/mode and every `CFG_PROTO_*` are now settled, see "Settled link values") | `CFG_TBD` = `0xFFFFFFFFFFFFFFFFull` | `CFG_IS_TBD(x)` (C and `#if`) | `Option<T>` = `None` (`tbd.rs`, the open HMI items) |
 | register address / bit field / code | `ADXL355_TBD` (same value, `adxl355_regs.h`), flag `ADXL355_REGS_ARE_TBD` | `ADXL355_IS_TBD(x)` | - |
 | enum value | `ADXL355_RANGE_UNSET`, `FSM_STATE_UNSET`, `FSM_POLICY_UNSET`, `ADXL355_FILTER_UNSET` (-1) | `== *_UNSET` | `Option` (`config.rs`) |
 | array size | settled: `CFG_SAMPLE_BUFFER_DEPTH` 64, `CFG_USB_FRAME_BUF_BYTES`, `CFG_USB_RX_BUF_BYTES`; flags `CFG_SAMPLE_BUFFER_DEPTH_IS_TBD` / `CFG_USB_BUF_BYTES_IS_TBD` are 0 | the flag | - |
@@ -40,8 +40,9 @@ marked TBD below is a "not configured" sentinel in code until the owner decides 
 (`drivers/accel/adxl355/adxl355.h` and `adxl355.c`, pinned to commit
 `4557b1f58f8a233bd116dbb02d8d5c447d3699b6`; owner-named source). Every value carries a
 `no-OS H:<line>` / `no-OS C:<line>` citation in the header. Entries the no-OS driver does not
-define stay `ADXL355_TBD`: `ADXL355_FIFO_CAPACITY` (no-OS gives only the watermark maximum
-`ADXL355_FIFO_SAMPLES_MAX` 0x60). `ADXL355_REGS_ARE_TBD` is computed from the entries the driver
+define stay `ADXL355_TBD`. `ADXL355_FIFO_CAPACITY` is 96 entries (32 XYZ sets), cited no-OS pin
+`4557b1f58f8a233bd116dbb02d8d5c447d3699b6` `drivers/accel/adxl355/README.rst:92` "There are 96 locations in the FIFO"
+(:96 default and maximum FIFO samples value 96; equals `ADXL355_FIFO_SAMPLES_MAX` 0x60). `ADXL355_REGS_ARE_TBD` is computed from the entries the driver
 uses: today 0. Contract (`adxl355.h` header comment), for `adxl355_init`, `_configure`,
 `_set_measuring`, `_read_sample`, `_read_fifo`, `_status`:
 
@@ -56,8 +57,8 @@ Sequences implemented from no-OS: init = soft reset (write reset code, poll STAT
 NVM_BUSY clears, 255 tries) then DEVID_AD, DEVID_MST, PARTID check; configure = POWER_CTL to
 standby if measuring, RANGE, ODR/LPF, HPF read-modify-write, restore POWER_CTL;
 set_measuring = POWER_CTL write; read_sample = three 3-byte reads (X, Y, Z), 20-bit two's
-complement in bits 23..4; read_fifo = FIFO_ENTRIES, then one FIFO_DATA burst of whole X/Y/Z
-samples; status = STATUS read. Post-reset delay: `adxl355_bus_t.delay_ms` (NULL is `ADXL355_ERR_ARG`)
+complement in bits 23..4; read_fifo = the DMA FIFO drain (section "FIFO drain"); status = STATUS read
+that also counts `FIFO_OVR`. Post-reset delay: `adxl355_bus_t.delay_ms` (NULL is `ADXL355_ERR_ARG`)
 is called once with `CFG_ADXL355_RESET_DELAY_MS` after NVM_BUSY clears and before the ID reads
 (cited: no-OS `adxl355.c` C:297-298 `no_os_mdelay(1)`); `main.c` binds it to `sleep_ms`. Not taken
 from no-OS: the shadow-register compare after reset (C:300-308; the ID check stands in). SPI command
@@ -104,10 +105,11 @@ The datasheet (analog.com) could not be fetched, so no value here is cited to it
 | Default range | +/-2 g | design choice: `adxl355_configure()` needs a legal range to write ODR 4000 Hz; smallest range, no source gives a default. The model's default-range TBD is unchanged. | `CFG_DEFAULT_RANGE` |
 | Sample buffer depth | 64 samples (768 B RAM, 16 ms at 4 kHz) | design choice: depth 1 cannot hold one FIFO burst (32 samples = 0x60 entries / 3) | `CFG_SAMPLE_BUFFER_DEPTH` |
 
+Settled by the FIFO drain job (owner t39u, see "FIFO drain"): FIFO capacity 96 (cited), watermark, trigger, overflow count and status response.
+
 Stay TBD on purpose (not needed to stream): log format, HMI form beyond the plain text live view
 (`pico355-hmi` prints one `x y z` raw-count line per sample), LDO output check, cable pinout, CI pins,
-default filter (the high-pass is left at the sensor value), FIFO watermark (the driver reads
-whatever `FIFO_ENTRIES` reports when DRDY is high), buffer overflow policy (newest sample dropped and
+default filter (the high-pass is left at the sensor value), buffer overflow policy (newest sample dropped and
 counted, a stream-error fault is not raised for it), HMI range/filter defaults and flags.
 
 ## Link
@@ -129,8 +131,72 @@ after opening. Bytes sent before the port is opened are dropped, not queued.
 - USB full speed signalling rate: 12 Mbit/s = 1 500 000 B/s (USB 2.0 specification, general knowledge,
   not fetched in this job). Worst framing uses 60 000 / 1 500 000 = **4 %** of the raw signalling rate,
   the designed framing 2.4 %; a margin of 25x or more, so no bulk-transfer ceiling is needed to call it feasible.
-- SPI side at 1 MHz: 36 000 B/s x 8 = 288 kbit/s, 29 % of the 1 Mbit/s clock, plus 1 command byte per
-  burst and one `FIFO_ENTRIES` read per DRDY pass. Feasible on paper; **not measured on hardware**.
+- SPI side at 1 MHz: 36 000 B/s x 8 = 288 kbit/s of FIFO data, 29 % of the 1 Mbit/s clock, plus the drain
+  overhead worked out in "FIFO drain bandwidth" (about 36 % worst case). **Not measured on hardware**.
+
+## FIFO drain (SPI0 DMA)
+
+Citations are to the no-OS pin `4557b1f58f8a233bd116dbb02d8d5c447d3699b6` (`drivers/accel/adxl355/`) and to
+`raspberrypi/pico-examples` `spi/spi_dma/spi_dma.c` (local copy under `ds/pico-examples/`). Anything not
+cited is labelled design decision (owner t39u) and is not a part spec.
+
+- **Capacity**: 96 entries = 32 XYZ sets (`README.rst:92`; :96 default and maximum 96; :127 the overflow
+  interrupt fires on an attempt to write past the 96 locations and a STATUS read clears it).
+  `ADXL355_FIFO_CAPACITY` = 96; a `FIFO_ENTRIES` reading above it is capped, so a drain is never longer than 96 entries.
+- **Sequence** (`adxl355_read_fifo`): read `FIFO_ENTRIES` first (no-OS `adxl355.c:664-668`); below the
+  watermark nothing else happens; otherwise whole XYZ sets only (entries rounded down to a multiple of 3, as
+  `adxl355.c:714`; the tail stays in the FIFO for the next drain; at most as many sets as the caller can store).
+  Then ONE CS-low window of `1 + entries x 3` bytes: the TX DMA channel repeats the `FIFO_DATA` read byte
+  `(0x11 << 1) | READ_BIT` = 0x23 (`read_increment = false`, as the RX channel in `spi_dma.c:74`), the RX DMA
+  channel writes every received byte into the buffer (`write_increment = true`, `spi_dma.c:75`); the first received byte is
+  the dummy clocked with the command byte, the FIFO data starts at the second. Both channels are started
+  together with `dma_start_channel_mask` (`spi_dma.c:85`). `main.c` `bus_fifo_read` binds this to SPI0 DMA;
+  `adxl355_fifo_hal_t` is the mock point, and with no hal one `transfer()` carries the same bytes, so the host tests need no DMA.
+  When `FIFO_ENTRIES` is a multiple of 3 (the watermark case) the length is exactly `FIFO_ENTRIES x 3` data bytes.
+- **Marker alignment** (`adxl355_fifo_parse`; no-OS `adxl355.c:723-731`): an entry whose third byte has bit 0 (X
+  marker) set and bit 1 (empty) clear starts a set (`adxl355_regs.h` `ADXL355_FIFO_X_MARKER`, `_EMPTY`, no-OS C:724-725). The next
+  two entries are Y and Z and must be neither X-marked nor empty. Entries before the first X, empty entries and a
+  partial set (X, Y at the end, or an X that arrives before the Z) are discarded; the count of whole sets for N aligned entries is N / 3.
+  An all-empty drain yields no sample and no error. Extra rule beyond no-OS (design decision (owner t39u)): a set with a
+  non-plain Y or Z entry is dropped, the scan restarts at the next entry.
+- **Watermark** `CFG_FIFO_WATERMARK` = 48 entries (16 XYZ sets), written to `FIFO_SAMPLES` (0x29) by
+  `adxl355_set_fifo_watermark` before measuring starts (no-OS `adxl355.c:678-692`, value above 0x60 refused): design decision (owner t39u).
+  Reason: 16 sets per drain means 250 drains/s at 4 kHz, and after the watermark the FIFO still has
+  (96 - 48) / 3 = 16 sets = 4 ms of room before it is full.
+- **Trigger** `CFG_FIFO_TRIGGER` = poll `FIFO_ENTRIES` against the watermark, evaluated on each DRDY GP22 high: design decision (owner t39u).
+  The `FIFO_ENTRIES` read is needed for the drain length anyway; the DRDY gate of PICO355-R4 stays, so there is no bus
+  traffic while DRDY is low. Rejected: drain on every DRDY (one drain per sample, no batching, the per-drain overhead repeated
+  4000 times a second), and drain on the `FIFO_FULL` flag (what the flag means relative to the watermark is not in the cited
+  no-OS files; it is not used). Not verified: how long DRDY stays high in FIFO mode. If it is a short pulse the loop could
+  look too late; the overflow count below is how a hardware run would show that.
+- **Overflow** (design decision (owner t39u)): after each drain `acq_step` reads STATUS once; a set `FIFO_OVR` (no-OS
+  `adxl355_regs.h` `ADXL355_STATUS_FIFO_OVR`, H:222) adds 1 to `adxl355_t.fifo_overflows`, a 32-bit counter that saturates at
+  0xFFFFFFFF instead of wrapping and is cleared by `adxl355_init`. A STATUS read clears the interrupt (`README.rst:127`),
+  so it counts STATUS observations of the flag, about one per overflow event, not lost samples. A `CMD_GET_STATUS` frame (0x04) is answered
+  with a `RESP_STATUS` frame (0x03) whose `value` field (u32 LE, payload offset 2) is that count; the command changes nothing else.
+  The HMI mirrors the code (`CMD_GET_STATUS`) but has no flag that sends it yet.
+- Host tests: `test_fifo.c` (marker alignment, partial-set discard, empty marker, overflow count, status response,
+  capacity, watermark gate, drain length and TX byte at the hook, non-DMA fallback) and the `fifo_labels` check of the labels and verdict below.
+  **Not run on hardware.** No Pico was attached: the DMA path in `main.c` is built, not exercised.
+
+### FIFO drain bandwidth (SPI0 at 1 MHz, `CFG_SPI_CLOCK_HZ` unchanged)
+
+Wire time only, 8 clocks per byte, 1 MHz = 125 000 B/s:
+
+| Item | Bytes | Rate at 4 kHz |
+|---|---|---|
+| FIFO data, 4000 samples/s x 9 B | 36 000 B/s | 288 kbit/s |
+| Per drain (16 sets): `FIFO_ENTRIES` read 2 B + `FIFO_DATA` window 1 + 144 B + STATUS read 2 B = 149 B, 250 drains/s | 37 250 B/s | 298 kbit/s (29.8 %) |
+| Polls below the watermark, worst case one `FIFO_ENTRIES` read (2 B) per sample time, 3750/s | 7 500 B/s | 60 kbit/s |
+| Total worst case | 44 750 B/s | 358 kbit/s (35.8 %) |
+
+The one CS-low drain window is 145 B x 8 = 1.16 ms. Margin: 1 / 0.358 = about 2.8 times on wire time.
+
+Not in the numbers (not measured, no hardware): gaps between transactions and CS timing, DMA setup per drain, main-loop and
+USB service time (the drain blocks while the RX channel runs; the 4 ms of FIFO room after the watermark must cover it).
+
+Verdict: 1 MHz fits with margin (wire time, about 36 % worst case). Not a hardware result. The clock is not raised; `CFG_SPI_CLOCK_HZ` stays the cited 1 000 000.
+If a hardware run shows the overflow count rising, the first things to look at are the loop and USB time, not the SPI clock.
 
 ## Frame layout (design decision (2026-11-19, owner go t37u), not a part spec)
 
@@ -197,7 +263,8 @@ Frame = header (sync, type, length u16 LE) + payload + CRC-16/CCITT-FALSE (u16 L
 | `CFG_PROTO_CMD_SET_FILTER` | `CMD_SET_FILTER` | set filter | 0x03 | high-pass corner code 0..6 (no-OS `adxl355_hpf_corner`) |
 | `CFG_PROTO_RESP_ACK` | `RESP_ACK` | acknowledge (ResponseMessage) | 0x01 | 0 |
 | `CFG_PROTO_RESP_ERROR` | `RESP_ERROR` | error | 0x02 | `command_rc_t` of the refusal |
-| `CFG_PROTO_RESP_STATUS` | `RESP_STATUS` | status (reserved; not sent yet) | 0x03 | - |
+| `CFG_PROTO_RESP_STATUS` | `RESP_STATUS` | status: answer to `CMD_GET_STATUS` (design decision (owner t39u)) | 0x03 | FIFO overflow count: u32, little-endian, saturates at 0xFFFFFFFF (field `value`, payload offset 2); `cmd_code` = 0x04 |
+| `CFG_PROTO_CMD_GET_STATUS` | `CMD_GET_STATUS` | get status (design decision (owner t39u)) | 0x04 | ignored (send 0); no configuration change, no state change, streaming continues |
 
 The HMI sends `CMD_SET_ODR` (default 4000 Hz, `--odr <hz>`) after opening the port; the firmware answers with an
 ACK frame, which the HMI prints as `response: ...`. Range and filter commands exist in the set but have no HMI
@@ -230,13 +297,13 @@ Settled by the end-to-end link job (see "Settled link values"): SPI clock and mo
 format and layout, command set, serial settings, boot state machine table, default range (design choice),
 sample buffer depth (design choice). Still TBD:
 
-1. FIFO watermark - `CFG_FIFO_WATERMARK` (not needed to stream).
+1. (settled by the FIFO drain job, owner t39u) FIFO watermark - `CFG_FIFO_WATERMARK`; see "FIFO drain". Still TBD there: the hardware proof (below).
 2. Default filter (settings exposed) - `CFG_DEFAULT_FILTER`, HMI `filter`.
 3. Buffer overflow policy - `CFG_SAMPLE_BUFFER_OVERFLOW_POLICY` (behaviour while TBD: the newest sample is dropped and counted).
 4. LDO output check - TPS7A2033 output voltage not yet checked against its datasheet (PICO355-R3); hardware, no code constant.
 5. Cable pinout - X5 cable assumed straight 1:1, unverified; hardware, no code constant.
 6. HMI form beyond the plain text live view, log format, port discovery, refresh rate (`tbd.rs`); model default range for the HMI (`config.rs` `range`).
-7. CI pins; `ADXL355_FIFO_CAPACITY` (the no-OS files give only the watermark maximum).
+7. CI pins. (`ADXL355_FIFO_CAPACITY` is settled: 96, cited.)
 
 ## Confirmed constants
 
@@ -252,7 +319,7 @@ Firmware (`firmware/include/`, host-compilable, no SDK headers; `main.c` binds t
 |---|---|---|
 | `config.h` | - | all `CFG_*` constants |
 | `adxl355_regs.h` | - | register/bit-field sentinels |
-| `adxl355.h` | spiDriver | `adxl355_bus_t{transfer, ctx, delay_ms}`; `adxl355_init(dev, bus)`, `adxl355_configure(dev, cfg)`, `adxl355_set_measuring(dev, on)`, `adxl355_read_sample(dev, out)`, `adxl355_read_fifo(dev, out, max, n_read)`, `adxl355_status(dev, status)` -> `adxl355_rc_t` (`_ERR_TBD`, `_ERR_NOT_INIT`) |
+| `adxl355.h` | spiDriver | `adxl355_bus_t{transfer, ctx, delay_ms}`; `adxl355_init(dev, bus)`, `adxl355_configure(dev, cfg)`, `adxl355_set_measuring(dev, on)`, `adxl355_read_sample(dev, out)`, `adxl355_read_fifo(dev, out, max, n_read)`, `adxl355_fifo_parse(raw, n_entries, out, max, n_out)`, `adxl355_set_fifo_hal(dev, hal)` (`adxl355_fifo_hal_t{read, ctx}`), `adxl355_set_fifo_watermark(dev, entries)`, `adxl355_status(dev, status)` (counts `FIFO_OVR` in `dev->fifo_overflows`) -> `adxl355_rc_t` (`_ERR_TBD`, `_ERR_NOT_INIT`) |
 | `acquisition.h` | drdyAcquisition | `acq_hal_t{drdy_read}`; `acq_init(acq, hal, dev, buf)`, `acq_step(acq, pushed)` -> `acq_rc_t` (`ACQ_ERR_TBD`) |
 | `sample_buffer.h` | sampleBuffer | `sample_buffer_init(buf)`, `_push(buf, s)`, `_pop(buf, out)`, `_count(buf)`, `_overflows(buf)` |
 | `usb_stream.h` | usbCdcStreamer | `usb_stream_hal_t{write, read}`; `usb_stream_init(us, hal, frame_buf, cap)`, `_send_batch(us, buf, max, sent)`, `_send_response(us, resp)`, `_receive(us, buf, cap, n)` (`USB_STREAM_ERR_TBD`) |

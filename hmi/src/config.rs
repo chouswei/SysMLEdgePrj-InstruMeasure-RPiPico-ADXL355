@@ -78,7 +78,10 @@ pub mod link {
     pub const CMD_SET_FILTER: u8 = 0x03;
     pub const RESP_ACK: u8 = 0x01;
     pub const RESP_ERROR: u8 = 0x02;
+    /// value = FIFO overflow count (u32), answers `CMD_GET_STATUS`
     pub const RESP_STATUS: u8 = 0x03;
+    /// get status, command value ignored (send 0); design decision (owner t39u)
+    pub const CMD_GET_STATUS: u8 = 0x04;
 
     // ---- serial open path (HMI only; USB CDC ignores the baud value) ----
     /// Baud passed to the serial port; a CDC device does not use it.

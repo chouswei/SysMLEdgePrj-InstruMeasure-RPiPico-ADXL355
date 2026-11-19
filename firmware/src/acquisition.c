@@ -30,6 +30,15 @@ acq_rc_t acq_step(acq_t *acq, size_t *pushed)
     if (rc == ADXL355_ERR_TBD) return ACQ_ERR_TBD;   /* TBD rule 3: propagate, buffer untouched */
     if (rc != ADXL355_OK || n_read > CFG_SAMPLE_BUFFER_DEPTH) return ACQ_ERR_SENSOR;
 
+    /* After a drain, read STATUS once so a FIFO_OVR is counted (adxl355_status; design decision (owner t39u)).
+     * Below the watermark nothing was drained and no STATUS read is made. */
+    if (n_read > 0) {
+        uint8_t status;
+        rc = adxl355_status(acq->dev, &status);
+        if (rc == ADXL355_ERR_TBD) return ACQ_ERR_TBD;
+        if (rc != ADXL355_OK) return ACQ_ERR_SENSOR;
+    }
+
     for (i = 0; i < n_read; i++) {
         sample_buffer_rc_t brc = sample_buffer_push(acq->buf, &batch[i]);
         if (brc == SAMPLE_BUFFER_OVERFLOW) {

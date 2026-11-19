@@ -11,6 +11,7 @@
  * never an invented number. Every settled value below carries one label:
  *   "cited"   = Analog Devices no-OS pin 4557b1f58f8a233bd116dbb02d8d5c447d3699b6 (file named on the line);
  *   "design decision (2026-11-19, owner go t37u)" = our own choice (link, protocol, boot state), NOT a part spec;
+ *   "design decision (owner t39u)" = our own FIFO drain choice (watermark, trigger, overflow status), NOT a part spec;
  *   "design choice" = a value needed to stream, conservative, no source gives one.
  * The CFG_PROTO_* names are mirrored 1:1 in hmi/src/config.rs `link` (without CFG_;
  * hmi/tests/link_config.rs parses this file and compares) and described in docs/protocol.md.
@@ -80,9 +81,15 @@
 #define CFG_DEFAULT_FILTER CFG_TBD /* TODO(TBD) filter settings exposed: default filter code not decided (PICO355-R2); streaming does not need it, the HPF is left at the sensor value (ADXL355_FILTER_UNSET) */
 #endif
 #ifndef CFG_FIFO_WATERMARK
-#define CFG_FIFO_WATERMARK CFG_TBD /* TODO(TBD) FIFO watermark: not decided (PICO355-R4); streaming does not need it, the driver reads whatever FIFO_ENTRIES reports when DRDY is high */
+#define CFG_FIFO_WATERMARK 48u /* design decision (owner t39u), not a part spec: FIFO_SAMPLES watermark in entries = 16 XYZ sets, half of the cited 96-entry capacity (adxl355_regs.h ADXL355_FIFO_CAPACITY); a multiple of 3 and <= ADXL355_FIFO_SAMPLES_MAX; drain rate 4000/16 = 250 per s, 4 ms of headroom at 4 kHz before the FIFO is full (docs/protocol.md "FIFO drain bandwidth") */
 #endif
-
+/* FIFO drain trigger codes (design decision (owner t39u)): how main decides a drain is due. */
+#define CFG_FIFO_TRIGGER_POLL_ENTRIES 1u /* read FIFO_ENTRIES (needed anyway for the drain length) and drain when >= CFG_FIFO_WATERMARK */
+#define CFG_FIFO_TRIGGER_DRDY 2u         /* drain on every DRDY GP22 high: not chosen, one drain per sample, no batching */
+#define CFG_FIFO_TRIGGER_FIFO_FULL 3u    /* drain on the STATUS FIFO_FULL flag: not chosen, its watermark semantics are not in the cited sources */
+#ifndef CFG_FIFO_TRIGGER
+#define CFG_FIFO_TRIGGER CFG_FIFO_TRIGGER_POLL_ENTRIES /* design decision (owner t39u), not a part spec: poll FIFO_ENTRIES against CFG_FIFO_WATERMARK, evaluated on each DRDY GP22 high (the DRDY gate of PICO355-R4 stays: no bus traffic while it is low); FIFO_FULL / DRDY-only rejected, see docs/protocol.md */
+#endif
 /* ---- Sample buffer and USB scratch sizes (design choice, needed to stream) ---- */
 #ifndef CFG_SAMPLE_BUFFER_DEPTH
 #define CFG_SAMPLE_BUFFER_DEPTH 64u /* design choice (2026-11-19): needed to stream (depth 1 cannot hold one FIFO burst); 64 samples x 12 B = 768 B RAM, 16 ms at 4 kHz, covers one full FIFO read (32 samples, 0x60 entries / 3) */
@@ -214,7 +221,10 @@
 #define CFG_PROTO_RESP_ERROR 0x02u /* design decision (2026-11-19, owner go t37u): response code error, value = command_rc_t of the refusal (PICO355-R6) */
 #endif
 #ifndef CFG_PROTO_RESP_STATUS
-#define CFG_PROTO_RESP_STATUS 0x03u /* design decision (2026-11-19, owner go t37u): response code status (reserved, not sent by this firmware yet) (PICO355-R6) */
+#define CFG_PROTO_RESP_STATUS 0x03u /* design decision (owner t39u): response code status, value = FIFO overflow count, u32, saturating (answers CFG_PROTO_CMD_GET_STATUS) (PICO355-R6) */
+#endif
+#ifndef CFG_PROTO_CMD_GET_STATUS
+#define CFG_PROTO_CMD_GET_STATUS 0x04u /* design decision (owner t39u): code for "get status", command value ignored (send 0); answered with CFG_PROTO_RESP_STATUS, no configuration change, streaming continues (PICO355-R6) */
 #endif
 
 /* ---- State machine, PICO355-R7 (design decision (2026-11-19, owner go t37u): boot must reach STREAMING) ---- */

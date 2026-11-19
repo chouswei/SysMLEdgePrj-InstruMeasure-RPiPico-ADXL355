@@ -65,6 +65,7 @@ fn command_response_sample_constants_mirror_config_h() {
     assert_eq!(link::RESP_ACK as u64, cfg("CFG_PROTO_RESP_ACK"));
     assert_eq!(link::RESP_ERROR as u64, cfg("CFG_PROTO_RESP_ERROR"));
     assert_eq!(link::RESP_STATUS as u64, cfg("CFG_PROTO_RESP_STATUS"));
+    assert_eq!(link::CMD_GET_STATUS as u64, cfg("CFG_PROTO_CMD_GET_STATUS"));
 }
 
 #[test]

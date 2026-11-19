@@ -28,6 +28,7 @@
  * one burst; status). The TBD paths are tested against generated all-TBD and
  * partial register headers (test_adxl355_tbd.c, test_adxl355_partial.c).
  * ADXL355_ERR_NOT_IMPLEMENTED is returned only by the A1 stub bodies.
+ * adxl355_set_fifo_watermark and adxl355_fifo_parse follow the same order (ARG, TBD, NOT_INIT where a dev is used).
  *
  * Header deps: stdint, stdbool, stddef.
  */
@@ -77,7 +78,7 @@ typedef struct {
 /**
  * Bus operations. transfer() asserts CSN, clocks len bytes out of tx and into rx
  * (rx may be NULL), releases CSN. Returns 0 on success, non-zero on failure.
- * delay_ms() blocks for at least ms milliseconds; adxl355_init needs it for the
+delay_ms() blocks for at least ms milliseconds; adxl355_init needs it for the
  * post-soft-reset delay (CFG_ADXL355_RESET_DELAY_MS, cited: no-OS adxl355.c
  * C:297-298 no_os_mdelay(1)); adxl355_init returns ADXL355_ERR_ARG if it is NULL.
  */
@@ -87,11 +88,29 @@ typedef struct {
     void (*delay_ms)(void *ctx, uint32_t ms);
 } adxl355_bus_t;
 
+/**
+ * Optional DMA FIFO drain, bound with adxl355_set_fifo_hal after adxl355_init (kept apart from
+ * adxl355_bus_t so a three-member bus initialiser stays valid). read() runs ONE CSN-low window of
+ * len bytes: every MOSI byte is tx_byte (the TX DMA channel repeats one byte, read_increment false;
+ * pico-examples spi_dma.c:74) and every MISO byte goes to rx[0..len) (RX DMA, write_increment true;
+ * both channels started together with dma_start_channel_mask, spi_dma.c:85). rx[0] is the dummy byte
+ * clocked while the command byte goes out; the FIFO data is rx[1..len). Returns 0 on success.
+ * With no hal, adxl355_read_fifo falls back to one bus->transfer() with the same tx bytes and
+ * length, so the host tests need no DMA.
+ */
+typedef struct {
+    int (*read)(void *ctx, uint8_t tx_byte, uint8_t *rx, size_t len);
+    void *ctx;
+} adxl355_fifo_hal_t;
+
 /** Driver instance; caller owns storage. */
 typedef struct {
     const adxl355_bus_t *bus;
+    const adxl355_fifo_hal_t *fifo_hal;  /**< DMA drain hook or NULL (transfer() fallback); NULL after adxl355_init */
     adxl355_config_t config;
     bool initialised;
+    uint8_t fifo_watermark;    /**< entries; adxl355_read_fifo drains only at >= this; 0 = no gate (set by adxl355_set_fifo_watermark) */
+    uint32_t fifo_overflows;   /**< STATUS reads that showed FIFO_OVR since init; 32 bit, saturates at UINT32_MAX (design decision (owner t39u)) */
 } adxl355_t;
 
 /** Bind the bus, load default config, reset the part and check its IDs (contract above). */
@@ -106,10 +125,33 @@ adxl355_rc_t adxl355_set_measuring(adxl355_t *dev, bool on);
 /** Read one sample from the data registers. */
 adxl355_rc_t adxl355_read_sample(adxl355_t *dev, adxl355_sample_t *out);
 
-/** Burst-read up to max samples from the FIFO; *n_read gets the number stored in out. */
+/**
+ * Drain the FIFO (design decision (owner t39u) for the trigger and watermark, see docs/protocol.md):
+ * read FIFO_ENTRIES first (no-OS C:664-668); below dev->fifo_watermark, or below one XYZ set, return
+ * OK with *n_read = 0 and no drain. Otherwise whole sets only (entries rounded down to a multiple of 3,
+ * no-OS C:714; the tail stays in the FIFO), at most ADXL355_FIFO_CAPACITY entries and at most max sets;
+ * one CS-low window of 1 + entries x 3 bytes through fifo_hal->read (DMA) or the transfer() fallback;
+ * then adxl355_fifo_parse on rx[1..]. *n_read gets the number of samples stored in out.
+ */
 adxl355_rc_t adxl355_read_fifo(adxl355_t *dev, adxl355_sample_t *out, size_t max, size_t *n_read);
 
-/** Read the raw STATUS register into *status. */
+/**
+ * Parse raw FIFO bytes (3 bytes per entry, no dummy) into whole XYZ samples (no-OS C:723-731):
+ * an entry whose third byte has bit 0 (X marker) set and bit 1 (empty) clear starts a set; the
+ * next two entries are its Y and Z and must be neither an X marker nor empty, else the set is
+ * partial and dropped and scanning goes on. Entries before the first X marker, empty entries and
+ * a trailing partial set are discarded. *n_out = sets stored (at most max). ADXL355_ERR_TBD if
+ * a marker entry is TBD (*n_out = 0); out is untouched where no sample is stored.
+ */
+adxl355_rc_t adxl355_fifo_parse(const uint8_t *raw, size_t n_entries, adxl355_sample_t *out, size_t max, size_t *n_out);
+
+/** Bind (or, with NULL, clear) the DMA FIFO drain hook; call after adxl355_init. */
+adxl355_rc_t adxl355_set_fifo_hal(adxl355_t *dev, const adxl355_fifo_hal_t *hal);
+
+/** Write the FIFO_SAMPLES watermark (no-OS C:678-692); entries > ADXL355_FIFO_SAMPLES_MAX is ADXL355_ERR_ARG. */
+adxl355_rc_t adxl355_set_fifo_watermark(adxl355_t *dev, uint8_t entries);
+
+/** Read the raw STATUS register into *status; a set FIFO_OVR bit adds 1 to dev->fifo_overflows (saturating). */
 adxl355_rc_t adxl355_status(adxl355_t *dev, uint8_t *status);
 
 #endif /* PICO355_ADXL355_H */
