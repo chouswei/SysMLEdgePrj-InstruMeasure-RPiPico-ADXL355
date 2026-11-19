@@ -7,6 +7,9 @@ use crate::protocol::Sample;
 
 /// Render `samples` as text lines to `out`.
 pub fn render<W: Write>(out: &mut W, samples: &[Sample]) -> io::Result<()> {
-    let _ = (out, samples);
-    Err(io::Error::new(io::ErrorKind::Unsupported, "not implemented"))
+    // One line per sample: "x y z" in raw decimal counts (no units, no scaling).
+    for s in samples {
+        writeln!(out, "{} {} {}", s.x, s.y, s.z)?;
+    }
+    Ok(())
 }
