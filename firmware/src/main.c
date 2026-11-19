@@ -114,11 +114,22 @@ int main(void)
     adxl355_bus_t bus_bound = bus;
     bus_bound.ctx = spi0;
 
-    (void)fsm_init_default(&g_fsm);
+    /* TODO(TBD) state transition table: while CFG_FSM_TRANSITION_TABLE is empty
+     * fsm_init_default returns FSM_ERR_TBD and the state stays FSM_STATE_UNSET.
+     * The loop below then never enters streaming and makes no sensor call. */
+    fsm_rc_t fsm_rc = fsm_init_default(&g_fsm);
+    (void)fsm_rc;
     (void)sample_buffer_init(&g_buf);
+
+    /* adxl355 register contract is TODO(TBD) (adxl355_regs.h). Without decided
+     * SPI constants the driver is not initialised; with them, an ADXL355_ERR_TBD
+     * or any other init failure leaves dev_rc non-OK, and acq_step reports it
+     * (ACQ_ERR_TBD / ACQ_ERR_SENSOR). No register value is invented here. */
+    adxl355_rc_t dev_rc = ADXL355_ERR_NOT_INIT;
     if (spi_constants_decided()) {
-        (void)adxl355_init(&g_dev, &bus_bound);
+        dev_rc = adxl355_init(&g_dev, &bus_bound);
     }
+    (void)dev_rc;
     (void)acq_init(&g_acq, &acq_hal, &g_dev, &g_buf);
     (void)usb_stream_init(&g_usb, &usb_hal, g_frame_buf, sizeof g_frame_buf);
 
@@ -145,7 +156,12 @@ int main(void)
         }
         if (fsm_state(&g_fsm) == FSM_STATE_STREAMING) {
             size_t pushed = 0, sent = 0;
-            (void)acq_step(&g_acq, &pushed);
+            acq_rc_t arc = acq_step(&g_acq, &pushed);
+            if (arc == ACQ_ERR_TBD || arc == ACQ_ERR_SENSOR || arc == ACQ_ERR_OVERFLOW) {
+                /* stream error -> fsm (FSM_EV_STREAM_ERROR); moves to FAULT once the table is decided */
+                fsm_state_t next = fsm_state(&g_fsm);
+                (void)fsm_dispatch(&g_fsm, FSM_EV_STREAM_ERROR, &next);
+            }
             (void)usb_stream_send_batch(&g_usb, &g_buf, CFG_SAMPLE_BUFFER_DEPTH, &sent);
         }
         tight_loop_contents();
