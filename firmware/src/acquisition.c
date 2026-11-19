@@ -12,7 +12,8 @@ acq_rc_t acq_init(acq_t *acq, const acq_hal_t *hal, adxl355_t *dev, sample_buffe
 
 acq_rc_t acq_step(acq_t *acq, size_t *pushed)
 {
-    adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH];
+    /* static: 64 x 12 B would take 768 B of the 2 KB default RP2040 stack; one acq_t runs at a time */
+    static adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH];
     size_t n_read = 0;
     size_t i;
     bool overflow = false;
