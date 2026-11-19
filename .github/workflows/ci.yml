@@ -1,0 +1,85 @@
+# CI for firmware + HMI (cost-hygiene: one Linux job, four steps, no matrix).
+# Each step runs one tools/checks script; the scripts are the single source of truth.
+name: ci
+
+on:
+  pull_request:
+    paths:
+      - "firmware/**"
+      - "hmi/**"
+      - "tools/**"
+      - "docs/protocol.md"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - "hmi/**"
+      - "tools/**"
+      - "docs/protocol.md"
+      - ".github/workflows/ci.yml"
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only token; no other scopes.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Draft PRs are skipped; pushes to main always run.
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04 # TODO(TBD): runner image not pinned by the repo; confirm the label
+    timeout-minutes: 30 # TODO(TBD): budget not in the model files; tune after first run
+
+    # Pico SDK location used by the checks (toolchain.env is box-only, so the
+    # runner gets the SDK from the workflow itself). Version = toolchain.env pin.
+    env:
+      PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4 # TODO(TBD): action major version not pinned by the repo
+
+      - name: Cache Pico SDK checkout
+        id: sdk-cache
+        uses: actions/cache@v4 # TODO(TBD): action major version not pinned by the repo
+        with:
+          path: pico-sdk
+          key: pico-sdk-2.3.1-${{ runner.os }}
+
+      - name: Check out Pico SDK (2.3.1 tag, submodules)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4 # TODO(TBD): action major version not pinned by the repo
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: 2.3.1
+          submodules: recursive
+          path: pico-sdk
+
+      - name: Install build tools
+        # TODO(TBD): arm-none-eabi-gcc, cmake, ninja and host gcc package names/versions
+        # are not pinned by the repo (toolchain.env pins the box, not the runner).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2 # TODO(TBD): action major version not pinned by the repo
+        with:
+          workspaces: hmi
+
+      - name: Firmware cross build
+        run: bash tools/checks/firmware-crossbuild.sh
+
+      - name: Host tests (firmware)
+        run: bash tools/checks/host-tests.sh
+
+      - name: Firmware lint
+        run: bash tools/checks/firmware-lint.sh
+
+      - name: HMI build and tests
+        run: bash tools/checks/hmi.sh
