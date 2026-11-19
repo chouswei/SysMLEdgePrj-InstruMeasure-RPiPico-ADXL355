@@ -1,8 +1,8 @@
 //! HMI settings (model ConfigUi / EditSensorConfig, PICO355-R8; defaults per PICO355-R1, PICO355-R2).
 //! Filter settings exposed: TODO(TBD). Default range: TODO(TBD) (model AccelRange).
 
-/// Default output data rate (PICO355-R1 defaultStreamRate 4000 Hz).
-pub const DEFAULT_ODR_HZ: u32 = 4000;
+/// Default output data rate (PICO355-R1 defaultStreamRate 4000 Hz), from `tbd.rs`.
+pub const DEFAULT_ODR_HZ: u32 = crate::tbd::DEFAULT_ODR_HZ;
 
 /// Measurement range, mirrors model enum AccelRange.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

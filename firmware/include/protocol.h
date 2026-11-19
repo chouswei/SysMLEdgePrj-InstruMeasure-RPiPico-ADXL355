@@ -5,6 +5,13 @@
  * and responses on commandChannel). Every layout choice is a CFG_PROTO_* TODO(TBD)
  * in config.h, mirrored in hmi/src/tbd.rs and described in docs/protocol.md.
  * Model items: SampleBatch, CommandMessage / ConfigCommand, ResponseMessage.
+ *
+ * TBD rule (docs/protocol.md): each function first checks its arguments
+ * (PROTOCOL_ERR_ARG), then returns PROTOCOL_ERR_TBD if any CFG_PROTO_* value it
+ * needs is CFG_IS_TBD; then *out_len = 0 / *consumed = 0 and no output byte is
+ * written. Values are used only through an explicit cast after that check.
+ * Host tests may compile protocol.c with -DCFG_PROTO_...=<v> to inject a test
+ * frame format (config.h wraps each value in #ifndef).
  * Header deps: stdint, stdbool, stddef, config.h, adxl355.h.
  */
 #ifndef PICO355_PROTOCOL_H

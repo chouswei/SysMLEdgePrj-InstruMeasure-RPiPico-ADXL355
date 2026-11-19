@@ -5,6 +5,26 @@
  * (apply ODR, range, filter). Register knowledge lives only in adxl355_regs.h.
  * The bus is injected as adxl355_bus_t (main.c binds it to SDK SPI0 + CSN GP17),
  * so this module builds and tests on the host.
+ *
+ * Contract while registers are TODO(TBD) (adxl355_regs.h, ADXL355_REGS_ARE_TBD),
+ * the same for every public function, checked in this order:
+ *   1. ADXL355_ERR_ARG: a NULL pointer, bus->transfer NULL, or a value out of
+ *      range (range not one of ADXL355_RANGE_2G/4G/8G, odr_hz 0).
+ *   2. ADXL355_ERR_TBD: a register entry (ADXL355_IS_TBD) or config.h value
+ *      (CFG_IS_TBD) the operation needs is still a sentinel. No bus transfer is
+ *      made; *out / *status are left unchanged; *n_read is set to 0.
+ *      adxl355_init still binds dev->bus and loads dev->config with the defaults
+ *      (CFG_DEFAULT_ODR_HZ, CFG_DEFAULT_RANGE, filter ADXL355_FILTER_UNSET while
+ *      CFG_DEFAULT_FILTER is TBD) and leaves dev->initialised false.
+ *   3. ADXL355_ERR_NOT_INIT: dev->initialised is false (any call but init).
+ *   4. ADXL355_ERR_BUS: transfer() returned non-zero; ADXL355_ERR_ID: IDs differ.
+ *   5. ADXL355_OK.
+ * With today's all-TBD register header every valid call therefore returns
+ * ADXL355_ERR_TBD and makes zero transfer() calls; this is what the FA
+ * implementation returns and what the host test (PF) checks, with a mock bus
+ * that counts calls. Steps 3-5 become reachable only after entries are cited.
+ * ADXL355_ERR_NOT_IMPLEMENTED is returned only by the A1 stub bodies.
+ *
  * Header deps: stdint, stdbool, stddef.
  */
 #ifndef PICO355_ADXL355_H
@@ -20,8 +40,9 @@ typedef enum {
     ADXL355_ERR_ARG,             /**< NULL pointer or value out of range */
     ADXL355_ERR_BUS,             /**< bus transfer callback reported failure */
     ADXL355_ERR_ID,              /**< device ID read back did not match */
-    ADXL355_ERR_TBD,             /**< needed constant is still TODO(TBD) in config.h / adxl355_regs.h */
-    ADXL355_ERR_NOT_IMPLEMENTED  /**< stub body */
+    ADXL355_ERR_TBD,             /**< needed constant is still TODO(TBD) in config.h / adxl355_regs.h; no transfer made */
+    ADXL355_ERR_NOT_INIT,        /**< adxl355_init has not succeeded on this dev */
+    ADXL355_ERR_NOT_IMPLEMENTED  /**< stub body only */
 } adxl355_rc_t;
 
 /** Measurement range, mirrors model enum AccelRange; UNSET = TBD default. */
@@ -43,8 +64,11 @@ typedef struct {
 typedef struct {
     uint32_t odr_hz;         /**< output data rate; default CFG_DEFAULT_ODR_HZ (PICO355-R1) */
     adxl355_range_t range;   /**< measurement range */
-    uint8_t filter;          /**< filter setting; encoding TODO(TBD) (filter settings exposed) */
+    int16_t filter;          /**< filter code 0..255 once encoding is cited; ADXL355_FILTER_UNSET = not configured, TODO(TBD) (filter settings exposed) */
 } adxl355_config_t;
+
+/** adxl355_config_t.filter sentinel "not configured" (no legal code is negative). */
+#define ADXL355_FILTER_UNSET (-1)
 
 /**
  * Bus operations. transfer() asserts CSN, clocks len bytes out of tx and into rx
@@ -62,10 +86,10 @@ typedef struct {
     bool initialised;
 } adxl355_t;
 
-/** Bind the bus, reset the part and check its IDs. */
+/** Bind the bus, load default config, reset the part and check its IDs (contract above). */
 adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus);
 
-/** Write ODR, range and filter (model action configureSensor). Register sequence TODO(TBD). */
+/** Write ODR, range and filter (model action configureSensor); on OK dev->config = *cfg. Register sequence TODO(TBD). */
 adxl355_rc_t adxl355_configure(adxl355_t *dev, const adxl355_config_t *cfg);
 
 /** Start (true) or stop (false) measurement. */

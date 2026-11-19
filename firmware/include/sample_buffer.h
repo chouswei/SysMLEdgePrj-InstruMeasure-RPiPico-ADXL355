@@ -3,6 +3,12 @@
  *
  * Requirement: PICO355-R5 (buffer samples between acquisition and USB streaming).
  * Capacity CFG_SAMPLE_BUFFER_DEPTH and overflow policy are TODO(TBD) in config.h.
+ * The placeholder depth is 1 (CFG_SAMPLE_BUFFER_DEPTH_IS_TBD), so the buffer is
+ * full after one push and overflow tests are trivial until the depth is decided.
+ * While CFG_IS_TBD(CFG_SAMPLE_BUFFER_OVERFLOW_POLICY): a push on a full buffer
+ * keeps the stored samples unchanged (the new one is not stored), increments the
+ * overflow counter and returns SAMPLE_BUFFER_OVERFLOW. This is the not-configured
+ * behaviour, not a decided drop-newest policy.
  * Header deps: stdint, stdbool, stddef, config.h, adxl355.h.
  */
 #ifndef PICO355_SAMPLE_BUFFER_H
@@ -36,7 +42,7 @@ typedef struct {
 /** Empty the buffer and clear the overflow counter. */
 sample_buffer_rc_t sample_buffer_init(sample_buffer_t *buf);
 
-/** Append one sample; on full applies CFG_SAMPLE_BUFFER_OVERFLOW_POLICY (TODO(TBD)). */
+/** Append one sample; on full see the overflow rule above (policy TODO(TBD)). */
 sample_buffer_rc_t sample_buffer_push(sample_buffer_t *buf, const adxl355_sample_t *s);
 
 /** Remove the oldest sample into *out. */

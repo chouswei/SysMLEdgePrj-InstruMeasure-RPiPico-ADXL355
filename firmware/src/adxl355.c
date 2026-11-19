@@ -9,7 +9,7 @@ adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus)
     dev->bus = bus;
     dev->config.odr_hz = CFG_DEFAULT_ODR_HZ;
     dev->config.range = CFG_DEFAULT_RANGE;
-    dev->config.filter = CFG_DEFAULT_FILTER;
+    dev->config.filter = CFG_IS_TBD(CFG_DEFAULT_FILTER) ? ADXL355_FILTER_UNSET : (int16_t)CFG_DEFAULT_FILTER;
     dev->initialised = false;
     return ADXL355_ERR_NOT_IMPLEMENTED;
 }

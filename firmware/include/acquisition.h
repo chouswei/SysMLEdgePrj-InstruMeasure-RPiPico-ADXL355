@@ -3,7 +3,9 @@
  *
  * Requirement: PICO355-R4 (read samples over SPI0 only when DRDY on GP22 signals
  * new data; INT1/INT2 unconnected). DRDY edge and polling vs interrupt: TODO(TBD).
- * FIFO watermark: TODO(TBD) (CFG_FIFO_WATERMARK). main.c binds acq_hal_t to the
+ * FIFO watermark: TODO(TBD) (CFG_FIFO_WATERMARK). TBD rule: an ADXL355_ERR_TBD
+ * from the driver is returned as ACQ_ERR_TBD with *pushed = 0 and the buffer
+ * untouched; DRDY low returns ACQ_OK with *pushed = 0. main.c binds acq_hal_t to the
  * SDK GPIO read of CFG_PIN_DRDY_IN (input only, never driven).
  * Header deps: stdint, stdbool, stddef, adxl355.h, sample_buffer.h.
  */
@@ -21,7 +23,8 @@
 typedef enum {
     ACQ_OK = 0,              /**< step ran; *pushed may be 0 when DRDY was low */
     ACQ_ERR_ARG,
-    ACQ_ERR_SENSOR,          /**< adxl355 call failed */
+    ACQ_ERR_SENSOR,          /**< adxl355 call failed (other than ADXL355_ERR_TBD) */
+    ACQ_ERR_TBD,             /**< adxl355 returned ADXL355_ERR_TBD (registers or config still TODO(TBD)) */
     ACQ_ERR_OVERFLOW,        /**< sample buffer overflowed during this step */
     ACQ_ERR_NOT_IMPLEMENTED
 } acq_rc_t;

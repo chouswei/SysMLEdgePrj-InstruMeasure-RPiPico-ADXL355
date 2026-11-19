@@ -4,7 +4,8 @@
  * Requirement: PICO355-R5 (stream buffered raw X, Y, Z samples to the PC on
  * sampleStream). Also carries responses for PICO355-R6. Bytes go out through
  * usb_stream_hal_t, which main.c binds to SDK USB CDC. Frame layout belongs to
- * protocol.h only.
+ * protocol.h only. TBD rule: a PROTOCOL_ERR_TBD from the encoder is returned as
+ * USB_STREAM_ERR_TBD; then nothing is written and no sample is popped (*sent = 0).
  * Header deps: stdint, stdbool, stddef, protocol.h, sample_buffer.h.
  */
 #ifndef PICO355_USB_STREAM_H
@@ -23,6 +24,7 @@ typedef enum {
     USB_STREAM_ERR_ARG,
     USB_STREAM_ERR_ENCODE,       /**< protocol encode failed */
     USB_STREAM_ERR_WRITE,        /**< hal wrote fewer bytes than asked */
+    USB_STREAM_ERR_TBD,          /**< frame format (CFG_PROTO_*) still TODO(TBD); nothing written */
     USB_STREAM_ERR_NOT_IMPLEMENTED
 } usb_stream_rc_t;
 

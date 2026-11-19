@@ -3,8 +3,9 @@
  * Pico SDK headers: it binds SDK SPI0, GPIO and USB CDC into the hal structs
  * (adxl355_bus_t, acq_hal_t, usb_stream_hal_t) and runs the main loop.
  * Requirements: PICO355-R4, PICO355-R5, PICO355-R6, PICO355-R7.
- * While CFG_SPI_CLOCK_HZ / CFG_SPI_MODE are TODO(TBD) sentinels, SPI0 is not
- * initialised and the sensor is not touched.
+ * While CFG_SPI_CLOCK_HZ / CFG_SPI_MODE are TODO(TBD) sentinels (CFG_IS_TBD),
+ * SPI0 is not initialised and the sensor is not touched; TBD-dependent code is
+ * guarded with #if so no sentinel reaches an SDK call.
  */
 #include <stdio.h>
 
@@ -65,9 +66,11 @@ static size_t cdc_read(void *ctx, uint8_t *buf, size_t cap)
     return n;
 }
 
+#define PICO355_SPI_DECIDED (!CFG_IS_TBD(CFG_SPI_CLOCK_HZ) && !CFG_IS_TBD(CFG_SPI_MODE))
+
 static bool spi_constants_decided(void)
 {
-    return CFG_SPI_CLOCK_HZ != CFG_TBD && CFG_SPI_MODE != CFG_SPI_MODE_UNSET;
+    return PICO355_SPI_DECIDED;
 }
 
 static void pins_init(void)
@@ -76,16 +79,17 @@ static void pins_init(void)
     gpio_init(CFG_PIN_DRDY_IN);
     gpio_set_dir(CFG_PIN_DRDY_IN, GPIO_IN);
 
-    if (!spi_constants_decided()) return;
-    spi_init(spi0, CFG_SPI_CLOCK_HZ);
-    spi_set_format(spi0, 8, (CFG_SPI_MODE & 2u) ? SPI_CPOL_1 : SPI_CPOL_0,
-                   (CFG_SPI_MODE & 1u) ? SPI_CPHA_1 : SPI_CPHA_0, SPI_MSB_FIRST);
+#if PICO355_SPI_DECIDED
+    spi_init(spi0, (uint)CFG_SPI_CLOCK_HZ);
+    spi_set_format(spi0, 8, ((uint32_t)CFG_SPI_MODE & 2u) ? SPI_CPOL_1 : SPI_CPOL_0,
+                   ((uint32_t)CFG_SPI_MODE & 1u) ? SPI_CPHA_1 : SPI_CPHA_0, SPI_MSB_FIRST);
     gpio_set_function(CFG_PIN_SPI0_RX_MISO, GPIO_FUNC_SPI);
     gpio_set_function(CFG_PIN_SPI0_SCK, GPIO_FUNC_SPI);
     gpio_set_function(CFG_PIN_SPI0_TX_MOSI, GPIO_FUNC_SPI);
     gpio_init(CFG_PIN_SPI0_CSN);
     gpio_set_dir(CFG_PIN_SPI0_CSN, GPIO_OUT);
     gpio_put(CFG_PIN_SPI0_CSN, 1);
+#endif
 }
 
 /* ---- state (file-local, not in headers) ---- */
@@ -110,7 +114,7 @@ int main(void)
     adxl355_bus_t bus_bound = bus;
     bus_bound.ctx = spi0;
 
-    (void)fsm_init(&g_fsm);
+    (void)fsm_init_default(&g_fsm);
     (void)sample_buffer_init(&g_buf);
     if (spi_constants_decided()) {
         (void)adxl355_init(&g_dev, &bus_bound);
@@ -120,7 +124,7 @@ int main(void)
 
     g_cfg.odr_hz = CFG_DEFAULT_ODR_HZ;
     g_cfg.range = CFG_DEFAULT_RANGE;
-    g_cfg.filter = CFG_DEFAULT_FILTER;
+    g_cfg.filter = CFG_IS_TBD(CFG_DEFAULT_FILTER) ? ADXL355_FILTER_UNSET : (int16_t)CFG_DEFAULT_FILTER;
     command_ctx_t cmd_ctx = { &g_dev, &g_cfg, &g_fsm };
 
     for (;;) {
@@ -128,8 +132,9 @@ int main(void)
         if (usb_stream_receive(&g_usb, g_rx_buf, sizeof g_rx_buf, &n) == USB_STREAM_OK && n > 0) {
             protocol_frame_t frame;
             size_t used = 0;
-            if (protocol_decode_frame(g_rx_buf, n, &frame, &used) == PROTOCOL_OK &&
-                frame.type == CFG_PROTO_TYPE_COMMAND) {
+            if (!CFG_IS_TBD(CFG_PROTO_TYPE_COMMAND) &&
+                protocol_decode_frame(g_rx_buf, n, &frame, &used) == PROTOCOL_OK &&
+                frame.type == (uint8_t)CFG_PROTO_TYPE_COMMAND) {
                 protocol_command_t cmd;
                 protocol_response_t resp;
                 if (command_parse(frame.payload, frame.payload_len, &cmd) == COMMAND_OK) {

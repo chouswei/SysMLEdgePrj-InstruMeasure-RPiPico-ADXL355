@@ -1,6 +1,10 @@
 //! Wire codec on the PC side (PICO355-R5, PICO355-R6): encode commands, decode
 //! sample-batch and response frames. Layout constants come only from `tbd.rs`
 //! (mirror of firmware `CFG_PROTO_*`); see docs/protocol.md.
+//!
+//! TBD rule: while a `tbd::PROTO_*` value a function needs is `None`, it returns
+//! `Err(ProtocolError::Tbd)` and produces or consumes no bytes. `NotImplemented`
+//! is returned only by the A1 stub bodies.
 
 #[allow(unused_imports)]
 use crate::tbd;

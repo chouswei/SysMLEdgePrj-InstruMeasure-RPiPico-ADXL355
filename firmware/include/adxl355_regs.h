@@ -9,13 +9,26 @@
  * written, so every entry below is a TODO(TBD) sentinel. Replace one entry at a
  * time, each with its citation; do not copy values from memory or other code.
  *
+ * Datasheet status: a download retry for the B1 rework also failed (analog.com
+ * timed out from the build box), so nothing below is cited yet.
+ *
+ * TBD rule (same as config.h, see docs/protocol.md "TBD rule"): every uncited
+ * entry is ADXL355_TBD, a 64-bit all-ones value that no 8-bit register address,
+ * mask or code can equal. Test entries with ADXL355_IS_TBD(x) (C or #if); the
+ * driver returns ADXL355_ERR_TBD for any operation that needs a TBD entry,
+ * before any bus transfer (contract in adxl355.h). ADXL355_REGS_ARE_TBD is 1
+ * while at least one entry the driver uses is TBD.
+ *
  * Only this header holds register knowledge; adxl355.c is its only user.
  * Header deps: none.
  */
 #pragma once /* include guard (no #define: every define in this file is a register entry) */
 
-#define ADXL355_REG_TBD 0xFFu /* TODO(TBD) sentinel: register address not yet cited from the datasheet */
-#define ADXL355_FIELD_TBD 0x00u /* TODO(TBD) sentinel: bit field not yet cited from the datasheet */
+#define ADXL355_TBD 0xFFFFFFFFFFFFFFFFull /* TODO(TBD) sentinel "not configured": outside every 8-bit address, mask and code */
+#define ADXL355_IS_TBD(x) ((x) == ADXL355_TBD) /* TODO(TBD) sentinel test, usable in C and #if */
+#define ADXL355_REG_TBD ADXL355_TBD /* TODO(TBD) sentinel: register address not yet cited from the datasheet */
+#define ADXL355_FIELD_TBD ADXL355_TBD /* TODO(TBD) sentinel: bit field or code not yet cited from the datasheet */
+#define ADXL355_REGS_ARE_TBD 1 /* TODO(TBD) flag: 1 while any entry below is uncited; 0 once all are cited */
 
 /* ---- Identification ---- */
 #define ADXL355_REG_DEVID_AD ADXL355_REG_TBD /* TODO(TBD) analog devices ID register, cite register map table */

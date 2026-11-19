@@ -2,9 +2,24 @@
  * fsm.h - table-driven firmware state machine (model state def FirmwareStates).
  *
  * Requirement: PICO355-R7 (states idle, configuring, streaming, fault).
- * Initial state, transition table and unknown-event policy are TODO(TBD) state
- * transition details in config.h (CFG_FSM_*). Event names are placeholders
- * taken from the model actions; triggers are TODO(TBD).
+ * Event names are placeholders taken from the model actions; triggers TODO(TBD).
+ *
+ * Table supply: fsm_init() takes the transition table, its length, the initial
+ * state and the unknown-event policy as arguments, so host tests inject their
+ * own table. fsm_init_default() passes the TODO(TBD) defaults from config.h
+ * (CFG_FSM_TRANSITION_TABLE, CFG_FSM_INITIAL_STATE, CFG_FSM_UNKNOWN_EVENT_POLICY);
+ * main.c uses it. The table is not copied: it must outlive the fsm_t.
+ *
+ * Behaviour (FS implements, PF tests):
+ *   fsm_init: FSM_ERR_ARG for fsm NULL, table NULL with len > 0, initial not
+ *     UNSET and not a real state, or policy not a fsm_policy_t value;
+ *     FSM_ERR_TBD (state left FSM_STATE_UNSET) when len == 0, initial is
+ *     FSM_STATE_UNSET or policy is FSM_POLICY_UNSET; else FSM_OK, state = initial.
+ *   fsm_dispatch: FSM_ERR_ARG for NULL or ev >= FSM_EV_COUNT; FSM_ERR_TBD when
+ *     the fsm is not initialised (state UNSET); the first row with
+ *     (from == state, event == ev) moves to row.to and returns FSM_OK; no row:
+ *     FSM_POLICY_IGNORE stays, FSM_POLICY_FAULT moves to FSM_STATE_FAULT, both
+ *     return FSM_ERR_NO_TRANSITION. *next always gets the resulting state.
  * Header deps: stdint, stdbool, stddef, config.h.
  */
 #ifndef PICO355_FSM_H
@@ -52,20 +67,27 @@ typedef enum {
     FSM_POLICY_FAULT          /**< go to FSM_STATE_FAULT */
 } fsm_policy_t;
 
-/** One transition row; table rows come from CFG_FSM_TRANSITION_TABLE(X). */
+/** One transition row (the default rows come from CFG_FSM_TRANSITION_TABLE(X)). */
 typedef struct {
     fsm_state_t from;
     fsm_event_t event;
     fsm_state_t to;
 } fsm_transition_t;
 
-/** Machine instance. */
+/** Machine instance; fields are private to fsm.c. */
 typedef struct {
     fsm_state_t state;
+    const fsm_transition_t *table;
+    size_t table_len;
+    fsm_policy_t policy;
 } fsm_t;
 
-/** Enter CFG_FSM_INITIAL_STATE; FSM_ERR_TBD while it is FSM_STATE_UNSET. */
-fsm_rc_t fsm_init(fsm_t *fsm);
+/** Bind table[0..len), policy, and enter initial (rules above). */
+fsm_rc_t fsm_init(fsm_t *fsm, const fsm_transition_t *table, size_t len,
+                  fsm_state_t initial, fsm_policy_t policy);
+
+/** fsm_init with the config.h defaults; FSM_ERR_TBD while they are TODO(TBD). */
+fsm_rc_t fsm_init_default(fsm_t *fsm);
 
 /** Look up (state, event) in the table and move; *next = resulting state. */
 fsm_rc_t fsm_dispatch(fsm_t *fsm, fsm_event_t ev, fsm_state_t *next);
