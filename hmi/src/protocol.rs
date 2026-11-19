@@ -92,8 +92,9 @@ fn layout() -> Result<Layout, ProtocolError> {
 /// Encode one command frame.
 ///
 /// Returns `Tbd` while any frame or command constant is `None`. Even when all of
-/// them are decided, the byte layout (field order, endianness) is not in `tbd.rs`
-/// yet, so this still returns `Tbd` and produces no bytes. It never invents a layout.
+/// them are decided, the Rust codec for the layout names in `tbd.rs` (offsets,
+/// widths, byte order; docs/protocol.md "Frame layout") is not written yet, so this
+/// still returns `Tbd` and produces no bytes. It never invents a layout.
 pub fn encode_command(cmd: &Command) -> Result<Vec<u8>, ProtocolError> {
     let _ = layout()?;
     let _ = decided(tbd::PROTO_TYPE_COMMAND)?;

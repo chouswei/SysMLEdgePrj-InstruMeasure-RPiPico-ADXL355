@@ -79,6 +79,15 @@
 #ifndef CFG_SAMPLE_BUFFER_DEPTH_IS_TBD
 #define CFG_SAMPLE_BUFFER_DEPTH_IS_TBD 1 /* TODO(TBD) buffer depth flag: 1 while CFG_SAMPLE_BUFFER_DEPTH is the placeholder; set 0 when decided */
 #endif
+#ifndef CFG_USB_FRAME_BUF_BYTES
+#define CFG_USB_FRAME_BUF_BYTES 64u /* TODO(TBD) frame format: USB frame scratch size in main.c; placeholder, not a design value; tie to CFG_PROTO_HEADER_LEN + CFG_PROTO_MAX_PAYLOAD once decided (PICO355-R5) */
+#endif
+#ifndef CFG_USB_RX_BUF_BYTES
+#define CFG_USB_RX_BUF_BYTES 64u /* TODO(TBD) frame format: USB receive scratch size in main.c; placeholder, not a design value (PICO355-R6) */
+#endif
+#ifndef CFG_USB_BUF_BYTES_IS_TBD
+#define CFG_USB_BUF_BYTES_IS_TBD 1 /* TODO(TBD) USB scratch size flag: 1 while CFG_USB_FRAME_BUF_BYTES / CFG_USB_RX_BUF_BYTES are placeholders */
+#endif
 #ifndef CFG_SAMPLE_BUFFER_OVERFLOW_POLICY
 #define CFG_SAMPLE_BUFFER_OVERFLOW_POLICY CFG_TBD /* TODO(TBD) buffer depth overflow policy: drop-oldest or drop-newest not decided; behaviour while TBD in sample_buffer.h (PICO355-R5) */
 #endif
@@ -107,6 +116,67 @@
 #endif
 #ifndef CFG_PROTO_TYPE_RESPONSE
 #define CFG_PROTO_TYPE_RESPONSE CFG_TBD /* TODO(TBD) frame format: frame type id of a response (PICO355-R6) */
+#endif
+
+/* ---- USB frame layout (TBD), CFG_PROTO_* -----------------------------------
+ * Where each field sits and how it is encoded. protocol.c reads only these names
+ * (docs/protocol.md "Frame layout"). Offsets are byte offsets from the start of
+ * the header (header fields) or of the payload (payload fields). A *_MSB_FIRST
+ * flag is 1 for most significant byte first (big-endian), 0 for least
+ * significant byte first (little-endian). Field widths are 1..4 bytes. */
+#ifndef CFG_PROTO_SYNC_OFFSET
+#define CFG_PROTO_SYNC_OFFSET CFG_TBD /* TODO(TBD) frame layout: header offset of the sync byte */
+#endif
+#ifndef CFG_PROTO_TYPE_OFFSET
+#define CFG_PROTO_TYPE_OFFSET CFG_TBD /* TODO(TBD) frame layout: header offset of the frame type id byte */
+#endif
+#ifndef CFG_PROTO_LENGTH_OFFSET
+#define CFG_PROTO_LENGTH_OFFSET CFG_TBD /* TODO(TBD) frame layout: header offset of the payload length field */
+#endif
+#ifndef CFG_PROTO_LENGTH_MSB_FIRST
+#define CFG_PROTO_LENGTH_MSB_FIRST CFG_TBD /* TODO(TBD) frame layout: byte order of the length field (1 MSB first, 0 LSB first) */
+#endif
+#ifndef CFG_PROTO_PAD_BYTE
+#define CFG_PROTO_PAD_BYTE CFG_TBD /* TODO(TBD) frame layout: value written to header/payload bytes no field covers (ignored on decode) */
+#endif
+#ifndef CFG_PROTO_CHECKSUM_NONE
+#define CFG_PROTO_CHECKSUM_NONE CFG_TBD /* TODO(TBD) frame layout: the CFG_PROTO_CHECKSUM_KIND code that means "no checksum" */
+#endif
+#ifndef CFG_PROTO_CMD_PAYLOAD_LEN
+#define CFG_PROTO_CMD_PAYLOAD_LEN CFG_TBD /* TODO(TBD) command layout: command payload length in bytes (PICO355-R6) */
+#endif
+#ifndef CFG_PROTO_CMD_CODE_OFFSET
+#define CFG_PROTO_CMD_CODE_OFFSET CFG_TBD /* TODO(TBD) command layout: payload offset of the command code byte */
+#endif
+#ifndef CFG_PROTO_CMD_VALUE_OFFSET
+#define CFG_PROTO_CMD_VALUE_OFFSET CFG_TBD /* TODO(TBD) command layout: payload offset of the command value */
+#endif
+#ifndef CFG_PROTO_CMD_VALUE_BYTES
+#define CFG_PROTO_CMD_VALUE_BYTES CFG_TBD /* TODO(TBD) command layout: width of the command value (1..4 bytes) */
+#endif
+#ifndef CFG_PROTO_RESP_PAYLOAD_LEN
+#define CFG_PROTO_RESP_PAYLOAD_LEN CFG_TBD /* TODO(TBD) response layout: response payload length in bytes (PICO355-R6) */
+#endif
+#ifndef CFG_PROTO_RESP_CODE_OFFSET
+#define CFG_PROTO_RESP_CODE_OFFSET CFG_TBD /* TODO(TBD) response layout: payload offset of the response code byte */
+#endif
+#ifndef CFG_PROTO_RESP_CMD_CODE_OFFSET
+#define CFG_PROTO_RESP_CMD_CODE_OFFSET CFG_TBD /* TODO(TBD) response layout: payload offset of the answered command code byte */
+#endif
+#ifndef CFG_PROTO_RESP_VALUE_OFFSET
+#define CFG_PROTO_RESP_VALUE_OFFSET CFG_TBD /* TODO(TBD) response layout: payload offset of the response value */
+#endif
+#ifndef CFG_PROTO_RESP_VALUE_BYTES
+#define CFG_PROTO_RESP_VALUE_BYTES CFG_TBD /* TODO(TBD) response layout: width of the response value (1..4 bytes) */
+#endif
+#ifndef CFG_PROTO_VALUE_MSB_FIRST
+#define CFG_PROTO_VALUE_MSB_FIRST CFG_TBD /* TODO(TBD) command/response layout: byte order of the value fields (1 MSB first, 0 LSB first) */
+#endif
+#ifndef CFG_PROTO_SAMPLE_AXIS_BYTES
+#define CFG_PROTO_SAMPLE_AXIS_BYTES CFG_TBD /* TODO(TBD) sample encoding: bytes per axis value, two's complement, holds ADXL355_SAMPLE_BITS (PICO355-R5) */
+#endif
+#ifndef CFG_PROTO_SAMPLE_MSB_FIRST
+#define CFG_PROTO_SAMPLE_MSB_FIRST CFG_TBD /* TODO(TBD) sample encoding: byte order of each axis value (1 MSB first, 0 LSB first) */
 #endif
 
 /* ---- Command set (TBD), CFG_PROTO_CMD_* / CFG_PROTO_RESP_* ------------------ */

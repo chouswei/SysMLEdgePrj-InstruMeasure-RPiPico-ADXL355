@@ -66,6 +66,9 @@ static size_t cdc_read(void *ctx, uint8_t *buf, size_t cap)
     return n;
 }
 
+/* SPI bus from the model (SPI0, PICO355-R4) via CFG_SPI_INSTANCE_INDEX. */
+#define PICO355_SPI SPI_INSTANCE(CFG_SPI_INSTANCE_INDEX)
+
 #define PICO355_SPI_DECIDED (!CFG_IS_TBD(CFG_SPI_CLOCK_HZ) && !CFG_IS_TBD(CFG_SPI_MODE))
 
 static bool spi_constants_decided(void)
@@ -80,8 +83,8 @@ static void pins_init(void)
     gpio_set_dir(CFG_PIN_DRDY_IN, GPIO_IN);
 
 #if PICO355_SPI_DECIDED
-    spi_init(spi0, (uint)CFG_SPI_CLOCK_HZ);
-    spi_set_format(spi0, 8, ((uint32_t)CFG_SPI_MODE & 2u) ? SPI_CPOL_1 : SPI_CPOL_0,
+    spi_init(PICO355_SPI, (uint)CFG_SPI_CLOCK_HZ);
+    spi_set_format(PICO355_SPI, 8, ((uint32_t)CFG_SPI_MODE & 2u) ? SPI_CPOL_1 : SPI_CPOL_0,
                    ((uint32_t)CFG_SPI_MODE & 1u) ? SPI_CPHA_1 : SPI_CPHA_0, SPI_MSB_FIRST);
     gpio_set_function(CFG_PIN_SPI0_RX_MISO, GPIO_FUNC_SPI);
     gpio_set_function(CFG_PIN_SPI0_SCK, GPIO_FUNC_SPI);
@@ -99,8 +102,8 @@ static acq_t g_acq;
 static usb_stream_t g_usb;
 static fsm_t g_fsm;
 static adxl355_config_t g_cfg;
-static uint8_t g_frame_buf[64]; /* scratch size TODO(TBD) frame format: tie to CFG_PROTO_MAX_PAYLOAD once decided */
-static uint8_t g_rx_buf[64];    /* scratch size TODO(TBD) frame format */
+static uint8_t g_frame_buf[CFG_USB_FRAME_BUF_BYTES]; /* scratch size TODO(TBD) frame format (config.h) */
+static uint8_t g_rx_buf[CFG_USB_RX_BUF_BYTES];       /* scratch size TODO(TBD) frame format (config.h) */
 
 int main(void)
 {
@@ -112,7 +115,7 @@ int main(void)
     pins_init();
 
     adxl355_bus_t bus_bound = bus;
-    bus_bound.ctx = spi0;
+    bus_bound.ctx = PICO355_SPI;
 
     /* TODO(TBD) state transition table: while CFG_FSM_TRANSITION_TABLE is empty
      * fsm_init_default returns FSM_ERR_TBD and the state stays FSM_STATE_UNSET.

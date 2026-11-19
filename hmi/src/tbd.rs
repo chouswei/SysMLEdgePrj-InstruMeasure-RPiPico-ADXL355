@@ -22,6 +22,28 @@ pub const PROTO_TYPE_SAMPLE_BATCH: Option<u8> = None; // TODO(TBD) frame format:
 pub const PROTO_TYPE_COMMAND: Option<u8> = None; // TODO(TBD) frame format: command frame type id
 pub const PROTO_TYPE_RESPONSE: Option<u8> = None; // TODO(TBD) frame format: response frame type id
 
+// ---- USB frame layout (mirrors CFG_PROTO_* layout names; docs/protocol.md "Frame layout") ----
+// Offsets in bytes from the header start (header fields) or the payload start (payload
+// fields); a *_MSB_FIRST value is 1 = most significant byte first, 0 = least significant first.
+pub const PROTO_SYNC_OFFSET: Option<usize> = None; // TODO(TBD) frame layout: header offset of the sync byte
+pub const PROTO_TYPE_OFFSET: Option<usize> = None; // TODO(TBD) frame layout: header offset of the type id byte
+pub const PROTO_LENGTH_OFFSET: Option<usize> = None; // TODO(TBD) frame layout: header offset of the length field
+pub const PROTO_LENGTH_MSB_FIRST: Option<u8> = None; // TODO(TBD) frame layout: length field byte order
+pub const PROTO_PAD_BYTE: Option<u8> = None; // TODO(TBD) frame layout: value of bytes no field covers
+pub const PROTO_CHECKSUM_NONE: Option<u8> = None; // TODO(TBD) frame layout: PROTO_CHECKSUM_KIND code for "no checksum"
+pub const PROTO_CMD_PAYLOAD_LEN: Option<usize> = None; // TODO(TBD) command layout: payload length
+pub const PROTO_CMD_CODE_OFFSET: Option<usize> = None; // TODO(TBD) command layout: offset of the code byte
+pub const PROTO_CMD_VALUE_OFFSET: Option<usize> = None; // TODO(TBD) command layout: offset of the value
+pub const PROTO_CMD_VALUE_BYTES: Option<usize> = None; // TODO(TBD) command layout: value width (1..4)
+pub const PROTO_RESP_PAYLOAD_LEN: Option<usize> = None; // TODO(TBD) response layout: payload length
+pub const PROTO_RESP_CODE_OFFSET: Option<usize> = None; // TODO(TBD) response layout: offset of the code byte
+pub const PROTO_RESP_CMD_CODE_OFFSET: Option<usize> = None; // TODO(TBD) response layout: offset of the answered command code
+pub const PROTO_RESP_VALUE_OFFSET: Option<usize> = None; // TODO(TBD) response layout: offset of the value
+pub const PROTO_RESP_VALUE_BYTES: Option<usize> = None; // TODO(TBD) response layout: value width (1..4)
+pub const PROTO_VALUE_MSB_FIRST: Option<u8> = None; // TODO(TBD) command/response layout: value byte order
+pub const PROTO_SAMPLE_AXIS_BYTES: Option<usize> = None; // TODO(TBD) sample encoding: bytes per axis, two's complement
+pub const PROTO_SAMPLE_MSB_FIRST: Option<u8> = None; // TODO(TBD) sample encoding: axis byte order
+
 // ---- Command set (mirrors CFG_PROTO_CMD_* / CFG_PROTO_RESP_*) ----
 pub const PROTO_CMD_SET_ODR: Option<u8> = None; // TODO(TBD) command set: set output data rate
 pub const PROTO_CMD_SET_RANGE: Option<u8> = None; // TODO(TBD) command set: set measurement range

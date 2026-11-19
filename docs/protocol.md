@@ -12,7 +12,7 @@ marked TBD below is a "not configured" sentinel in code until the owner decides 
 | numeric `CFG_*` (SPI clock/mode, FIFO watermark, default filter, overflow policy, every `CFG_PROTO_*`) | `CFG_TBD` = `0xFFFFFFFFFFFFFFFFull` | `CFG_IS_TBD(x)` (C and `#if`) | `Option<T>` = `None` (`tbd.rs`) |
 | register address / bit field / code | `ADXL355_TBD` (same value, `adxl355_regs.h`), flag `ADXL355_REGS_ARE_TBD` | `ADXL355_IS_TBD(x)` | - |
 | enum value | `ADXL355_RANGE_UNSET`, `FSM_STATE_UNSET`, `FSM_POLICY_UNSET`, `ADXL355_FILTER_UNSET` (-1) | `== *_UNSET` | `Option` (`config.rs`) |
-| array size | placeholder `CFG_SAMPLE_BUFFER_DEPTH` 1 + flag `CFG_SAMPLE_BUFFER_DEPTH_IS_TBD` 1 | the flag | - |
+| array size | placeholder `CFG_SAMPLE_BUFFER_DEPTH` 1 + flag `CFG_SAMPLE_BUFFER_DEPTH_IS_TBD` 1; placeholders `CFG_USB_FRAME_BUF_BYTES` / `CFG_USB_RX_BUF_BYTES` 64 + flag `CFG_USB_BUF_BYTES_IS_TBD` 1 | the flag | - |
 
 1. No sentinel equals a legal value: every decided `CFG_*` or register value fits in 32 bits
    (8 bits for registers), the 64-bit all-ones sentinel does not; enum `*_UNSET` members are
@@ -89,13 +89,63 @@ The fields of a frame, in order, are named by these constants:
 | `CFG_PROTO_TYPE_COMMAND` | `PROTO_TYPE_COMMAND` | frame type id: command | TBD |
 | `CFG_PROTO_TYPE_RESPONSE` | `PROTO_TYPE_RESPONSE` | frame type id: response | TBD |
 
-Sample-batch payload: N samples of `x, y, z` (model AccelSample, 20-bit raw); per-sample byte
-encoding and batch size TBD (frame format and FIFO watermark TBD).
+Layout names (where each field sits and how it is encoded). Offsets are bytes from the start of
+the header (header fields) or of the payload (payload fields); a `*_MSB_FIRST` value is 1 for most
+significant byte first, 0 for least significant byte first; value and axis widths are 1..4 bytes:
+
+| Firmware (`config.h`) | Rust (`tbd.rs`) | Meaning | Value |
+|---|---|---|---|
+| `CFG_PROTO_SYNC_OFFSET` | `PROTO_SYNC_OFFSET` | header offset of the sync byte | TBD |
+| `CFG_PROTO_TYPE_OFFSET` | `PROTO_TYPE_OFFSET` | header offset of the frame type id byte | TBD |
+| `CFG_PROTO_LENGTH_OFFSET` | `PROTO_LENGTH_OFFSET` | header offset of the payload length field | TBD |
+| `CFG_PROTO_LENGTH_MSB_FIRST` | `PROTO_LENGTH_MSB_FIRST` | byte order of the length field | TBD |
+| `CFG_PROTO_PAD_BYTE` | `PROTO_PAD_BYTE` | value of header/payload bytes no field covers (ignored on decode) | TBD |
+| `CFG_PROTO_CHECKSUM_NONE` | `PROTO_CHECKSUM_NONE` | the `CFG_PROTO_CHECKSUM_KIND` code meaning "no checksum" | TBD |
+| `CFG_PROTO_CMD_PAYLOAD_LEN` | `PROTO_CMD_PAYLOAD_LEN` | command payload length | TBD |
+| `CFG_PROTO_CMD_CODE_OFFSET` | `PROTO_CMD_CODE_OFFSET` | payload offset of the command code byte | TBD |
+| `CFG_PROTO_CMD_VALUE_OFFSET` | `PROTO_CMD_VALUE_OFFSET` | payload offset of the command value | TBD |
+| `CFG_PROTO_CMD_VALUE_BYTES` | `PROTO_CMD_VALUE_BYTES` | width of the command value | TBD |
+| `CFG_PROTO_RESP_PAYLOAD_LEN` | `PROTO_RESP_PAYLOAD_LEN` | response payload length | TBD |
+| `CFG_PROTO_RESP_CODE_OFFSET` | `PROTO_RESP_CODE_OFFSET` | payload offset of the response code byte | TBD |
+| `CFG_PROTO_RESP_CMD_CODE_OFFSET` | `PROTO_RESP_CMD_CODE_OFFSET` | payload offset of the answered command code byte | TBD |
+| `CFG_PROTO_RESP_VALUE_OFFSET` | `PROTO_RESP_VALUE_OFFSET` | payload offset of the response value | TBD |
+| `CFG_PROTO_RESP_VALUE_BYTES` | `PROTO_RESP_VALUE_BYTES` | width of the response value | TBD |
+| `CFG_PROTO_VALUE_MSB_FIRST` | `PROTO_VALUE_MSB_FIRST` | byte order of the command/response value | TBD |
+| `CFG_PROTO_SAMPLE_AXIS_BYTES` | `PROTO_SAMPLE_AXIS_BYTES` | bytes per axis value (two's complement, at least `ADXL355_SAMPLE_BITS` = 20 bits, model resolutionBits) | TBD |
+| `CFG_PROTO_SAMPLE_MSB_FIRST` | `PROTO_SAMPLE_MSB_FIRST` | byte order of each axis value | TBD |
+
+A frame, in these names:
+
+- Header, `CFG_PROTO_HEADER_LEN` bytes: `CFG_PROTO_SYNC` at `CFG_PROTO_SYNC_OFFSET`; the type id
+  (`CFG_PROTO_TYPE_*`) at `CFG_PROTO_TYPE_OFFSET`; the payload length at `CFG_PROTO_LENGTH_OFFSET`,
+  `CFG_PROTO_LENGTH_FIELD_BYTES` wide, order `CFG_PROTO_LENGTH_MSB_FIRST`; every other header byte
+  is `CFG_PROTO_PAD_BYTE`.
+- Payload: right after the header, at most `CFG_PROTO_MAX_PAYLOAD` bytes; bytes no field covers are
+  `CFG_PROTO_PAD_BYTE`.
+- Checksum: only `CFG_PROTO_CHECKSUM_KIND == CFG_PROTO_CHECKSUM_NONE` is implemented; any other kind
+  returns `PROTOCOL_ERR_NOT_IMPLEMENTED` (no checksum algorithm is decided).
+- Command payload (`protocol_command_t` / `protocol::Command`), `CFG_PROTO_CMD_PAYLOAD_LEN` bytes:
+  `code` at `CFG_PROTO_CMD_CODE_OFFSET`, `value` at `CFG_PROTO_CMD_VALUE_OFFSET`
+  (`CFG_PROTO_CMD_VALUE_BYTES`, order `CFG_PROTO_VALUE_MSB_FIRST`).
+- Response payload (`protocol_response_t` / `protocol::Response`), `CFG_PROTO_RESP_PAYLOAD_LEN` bytes:
+  `code`, `cmd_code` and `value` at the `CFG_PROTO_RESP_*` offsets (`value`
+  `CFG_PROTO_RESP_VALUE_BYTES` wide, order `CFG_PROTO_VALUE_MSB_FIRST`).
+- Sample-batch payload: N samples of the model AccelSample axes `x, y, z` in that order, each
+  `CFG_PROTO_SAMPLE_AXIS_BYTES` two's complement, order `CFG_PROTO_SAMPLE_MSB_FIRST`; N is bounded by
+  `CFG_PROTO_MAX_PAYLOAD` (batch size also depends on the FIFO watermark, TBD).
+
+`firmware/src/protocol.c` reads only these names. It returns `PROTOCOL_ERR_TBD` (no byte written,
+`*out_len` / `*consumed` 0) while any name a function needs is TBD, and also when the values do not
+form a consistent layout (overlapping fields, a field outside its header or payload, a width outside
+1..4, a flag other than 0/1, an axis narrower than `ADXL355_SAMPLE_BITS`). A command/response value
+or sample axis that does not fit its decided width returns `PROTOCOL_ERR_TOO_LONG`.
+`hmi/src/protocol.rs` mirrors the names but has no codec yet, so it returns `Tbd` even when all are decided.
 
 ## Command set (all TBD)
 
 Command payload `{code, value}` (`protocol_command_t` / `protocol::Command`); response payload
-`{code, cmd_code, value}` (`protocol_response_t` / `protocol::Response`). Byte layout TBD.
+`{code, cmd_code, value}` (`protocol_response_t` / `protocol::Response`). Byte layout: the
+`CFG_PROTO_CMD_*` / `CFG_PROTO_RESP_*` layout names in "Frame layout" above (TBD).
 
 | Firmware | Rust | Meaning (model) | Value |
 |---|---|---|---|
@@ -116,7 +166,7 @@ macro is `CFG_TBD`, `Some(v)` with the same value once decided.
 2. SPI mode - `CFG_SPI_MODE`.
 3. FIFO watermark - `CFG_FIFO_WATERMARK`.
 4. Sample buffer depth and overflow policy - `CFG_SAMPLE_BUFFER_DEPTH` (placeholder 1, flag `CFG_SAMPLE_BUFFER_DEPTH_IS_TBD`; full after one push), `CFG_SAMPLE_BUFFER_OVERFLOW_POLICY` (while TBD a push on full stores nothing, counts an overflow, returns `SAMPLE_BUFFER_OVERFLOW`).
-5. USB frame format - `CFG_PROTO_*` table above.
+5. USB frame format and frame layout - `CFG_PROTO_*` tables above (field values, offsets, widths, byte order, pad byte, checksum-none code, command/response/sample encoding); USB scratch sizes `CFG_USB_FRAME_BUF_BYTES`, `CFG_USB_RX_BUF_BYTES` (placeholder 64, flag `CFG_USB_BUF_BYTES_IS_TBD`).
 6. Command set - `CFG_PROTO_CMD_*` / `CFG_PROTO_RESP_*` above.
 7. State transition details - `CFG_FSM_INITIAL_STATE`, `CFG_FSM_TRANSITION_TABLE`, `CFG_FSM_UNKNOWN_EVENT_POLICY` (PICO355-R7).
 8. LDO output check - TPS7A2033 output voltage not yet checked against its datasheet (PICO355-R3); hardware, no code constant.

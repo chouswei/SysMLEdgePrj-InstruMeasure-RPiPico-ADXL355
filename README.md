@@ -42,6 +42,8 @@ cargo run --manifest-path hmi/Cargo.toml -- --port <path> [--odr <hz>]
 
 `--help` prints the usage. `--odr` is optional; the default comes from `CFG_DEFAULT_ODR_HZ` (4000 Hz, PICO355-R1).
 
+Until the serial settings are decided (`SERIAL_BAUD` in `hmi/src/tbd.rs` is TODO(TBD)), the binary opens no port: it exits with a TBD link error. Only `--help` and the tests are useful today.
+
 ### Check scripts
 
 Run from the repository root. Each script exits non-zero on failure.
@@ -62,8 +64,12 @@ Each item is a single-place placeholder with a `TODO(TBD)` comment. Do not fill 
 - ADXL355 register addresses, masks and bit fields: `firmware/include/adxl355_regs.h` (datasheet not reachable from the build box)
 - SPI clock, SPI mode and FIFO watermark: `firmware/include/config.h`
 - Sensor supply, LDO output check (PICO355-R3): `firmware/include/config.h`
-- Frame format and buffer depth, USB frame format: `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
-- Command set and response codes, state transition details: `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
+- Sample buffer depth and overflow policy: `firmware/include/config.h`
+- USB frame format (sync, header length, length field width, checksum kind, maximum payload, frame type ids): `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
+- USB frame layout (`CFG_PROTO_*` offsets, widths, byte order, pad byte, checksum-none code, command/response payload layout, sample encoding width and byte order; table in `docs/protocol.md` "Frame layout"): `firmware/include/config.h`, `hmi/src/tbd.rs`
+- USB scratch buffer sizes (`CFG_USB_FRAME_BUF_BYTES`, `CFG_USB_RX_BUF_BYTES`, placeholder 64): `firmware/include/config.h`
+- Command set and response codes: `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
+- State transition details: `firmware/include/config.h`
 - Cable pinout (X5 assumed straight 1:1): `firmware/include/config.h`
 - Default range and default filter: `firmware/include/config.h`
 - HMI form, log format, serial settings, port discovery, live view refresh: `hmi/src/tbd.rs`, `docs/protocol.md`

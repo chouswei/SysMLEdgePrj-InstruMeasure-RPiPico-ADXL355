@@ -42,6 +42,8 @@ impl SerialTransport {
     pub fn open(path: &str) -> Result<Self, LinkError> {
         // TODO(TBD) serial settings: baud value comes from tbd.rs; None = not decided.
         let baud = tbd::SERIAL_BAUD.ok_or(LinkError::Tbd)?;
+        // TODO(TBD) serial settings: no read timeout is set, so a run loop that sees 0-byte
+        // reads can busy-spin; set one here once the serial-settings decision exists.
         let port = serialport::new(path, baud).open().map_err(LinkError::Serial)?;
         Ok(Self { port })
     }
