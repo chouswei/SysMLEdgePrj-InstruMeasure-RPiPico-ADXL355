@@ -1,0 +1,19 @@
+[package]
+name = "pico355-hmi"
+version = "0.1.0"
+edition = "2021"
+description = "Pico355 PC HMI: USB CDC serial link to the Pico firmware, config, live view, logging (PICO355-R8, PICO355-R9)"
+publish = false
+
+[lib]
+name = "pico355_hmi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pico355-hmi"
+path = "src/main.rs"
+
+[dependencies]
+# default-features = false: no libudev port enumeration (libudev headers are not
+# available on the build box); the user gives the port path.
+serialport = { version = "4", default-features = false }

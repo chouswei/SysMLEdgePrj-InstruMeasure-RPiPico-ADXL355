@@ -1,0 +1,324 @@
+/* protocol.c - frame encode/decode (PICO355-R5, PICO355-R6). Layout: CFG_PROTO_* (TODO(TBD)).
+ *
+ * Order in every function (protocol.h, docs/protocol.md "TBD rule"): argument check first
+ * (PROTOCOL_ERR_ARG), then the TBD check (PROTOCOL_ERR_TBD) with *out_len / *consumed = 0 and
+ * no output byte written, then the work. A value is used only after its CFG_IS_TBD test is
+ * false, through an explicit cast.
+ *
+ * Every layout choice comes from a named constant in config.h (docs/protocol.md "Frame
+ * layout"); there are no literal layout numbers in this file:
+ *   header   CFG_PROTO_HEADER_LEN bytes: CFG_PROTO_SYNC at CFG_PROTO_SYNC_OFFSET, type id
+ *            (CFG_PROTO_TYPE_*) at CFG_PROTO_TYPE_OFFSET, payload length at
+ *            CFG_PROTO_LENGTH_OFFSET (CFG_PROTO_LENGTH_FIELD_BYTES wide, order
+ *            CFG_PROTO_LENGTH_MSB_FIRST); every other header byte is CFG_PROTO_PAD_BYTE.
+ *   payload  follows the header, payload_len bytes; bytes no field covers are CFG_PROTO_PAD_BYTE.
+ *   checksum only CFG_PROTO_CHECKSUM_KIND == CFG_PROTO_CHECKSUM_NONE is implemented.
+ *   command  CFG_PROTO_CMD_PAYLOAD_LEN bytes: code at CFG_PROTO_CMD_CODE_OFFSET, value at
+ *            CFG_PROTO_CMD_VALUE_OFFSET (CFG_PROTO_CMD_VALUE_BYTES, CFG_PROTO_VALUE_MSB_FIRST).
+ *   response CFG_PROTO_RESP_PAYLOAD_LEN bytes: code, cmd_code, value at the CFG_PROTO_RESP_*
+ *            offsets (value CFG_PROTO_RESP_VALUE_BYTES, CFG_PROTO_VALUE_MSB_FIRST).
+ *   batch    per sample the model AccelSample axes x, y, z, each CFG_PROTO_SAMPLE_AXIS_BYTES
+ *            two's complement, order CFG_PROTO_SAMPLE_MSB_FIRST.
+ * A set of values that does not form a consistent layout (overlapping fields, a field outside
+ * its header/payload, a width outside 1..4 bytes) is treated as not decided: PROTOCOL_ERR_TBD.
+ */
+#include "protocol.h"
+
+#include "adxl355_regs.h" /* ADXL355_SAMPLE_BITS (model resolutionBits) */
+
+#define BITS_PER_BYTE 8u
+#define MAX_FIELD_BYTES sizeof(uint32_t) /* C field width of every multi-byte value */
+#define SAMPLE_AXES 3u                   /* model AccelSample: x, y, z */
+
+#define U(x) ((size_t)(uint32_t)(x)) /* use only after the CFG_IS_TBD test of x */
+
+/* ---- decided checks (TBD rule) ----------------------------------------- */
+
+static bool frame_decided(void)
+{
+    return !(CFG_IS_TBD(CFG_PROTO_SYNC) || CFG_IS_TBD(CFG_PROTO_HEADER_LEN) ||
+             CFG_IS_TBD(CFG_PROTO_LENGTH_FIELD_BYTES) || CFG_IS_TBD(CFG_PROTO_CHECKSUM_KIND) ||
+             CFG_IS_TBD(CFG_PROTO_MAX_PAYLOAD) || CFG_IS_TBD(CFG_PROTO_TYPE_SAMPLE_BATCH) ||
+             CFG_IS_TBD(CFG_PROTO_TYPE_COMMAND) || CFG_IS_TBD(CFG_PROTO_TYPE_RESPONSE) ||
+             CFG_IS_TBD(CFG_PROTO_SYNC_OFFSET) || CFG_IS_TBD(CFG_PROTO_TYPE_OFFSET) ||
+             CFG_IS_TBD(CFG_PROTO_LENGTH_OFFSET) || CFG_IS_TBD(CFG_PROTO_LENGTH_MSB_FIRST) ||
+             CFG_IS_TBD(CFG_PROTO_PAD_BYTE) || CFG_IS_TBD(CFG_PROTO_CHECKSUM_NONE));
+}
+
+static bool cmd_decided(void)
+{
+    return !(CFG_IS_TBD(CFG_PROTO_CMD_PAYLOAD_LEN) || CFG_IS_TBD(CFG_PROTO_CMD_CODE_OFFSET) ||
+             CFG_IS_TBD(CFG_PROTO_CMD_VALUE_OFFSET) || CFG_IS_TBD(CFG_PROTO_CMD_VALUE_BYTES) ||
+             CFG_IS_TBD(CFG_PROTO_VALUE_MSB_FIRST));
+}
+
+static bool resp_decided(void)
+{
+    return !(CFG_IS_TBD(CFG_PROTO_RESP_PAYLOAD_LEN) || CFG_IS_TBD(CFG_PROTO_RESP_CODE_OFFSET) ||
+             CFG_IS_TBD(CFG_PROTO_RESP_CMD_CODE_OFFSET) || CFG_IS_TBD(CFG_PROTO_RESP_VALUE_OFFSET) ||
+             CFG_IS_TBD(CFG_PROTO_RESP_VALUE_BYTES) || CFG_IS_TBD(CFG_PROTO_VALUE_MSB_FIRST));
+}
+
+static bool sample_decided(void)
+{
+    return !(CFG_IS_TBD(CFG_PROTO_SAMPLE_AXIS_BYTES) || CFG_IS_TBD(CFG_PROTO_SAMPLE_MSB_FIRST));
+}
+
+/* ---- layout consistency (called only after the matching *_decided) ------- */
+
+static bool width_ok(size_t n)
+{
+    return n >= 1u && n <= MAX_FIELD_BYTES;
+}
+
+static bool flag_ok(size_t f)
+{
+    return f == 0u || f == 1u;
+}
+
+static bool inside(size_t off, size_t n, size_t total)
+{
+    return off <= total && n <= total - off;
+}
+
+static bool apart(size_t a, size_t an, size_t b, size_t bn)
+{
+    return a + an <= b || b + bn <= a;
+}
+
+static bool frame_fits(void)
+{
+    size_t hl = U(CFG_PROTO_HEADER_LEN), lb = U(CFG_PROTO_LENGTH_FIELD_BYTES);
+    size_t so = U(CFG_PROTO_SYNC_OFFSET), to = U(CFG_PROTO_TYPE_OFFSET), lo = U(CFG_PROTO_LENGTH_OFFSET);
+    return width_ok(lb) && flag_ok(U(CFG_PROTO_LENGTH_MSB_FIRST)) && inside(so, 1u, hl) &&
+           inside(to, 1u, hl) && inside(lo, lb, hl) && apart(so, 1u, to, 1u) &&
+           apart(so, 1u, lo, lb) && apart(to, 1u, lo, lb);
+}
+
+static bool cmd_fits(void)
+{
+    size_t pl = U(CFG_PROTO_CMD_PAYLOAD_LEN), vb = U(CFG_PROTO_CMD_VALUE_BYTES);
+    size_t co = U(CFG_PROTO_CMD_CODE_OFFSET), vo = U(CFG_PROTO_CMD_VALUE_OFFSET);
+    return width_ok(vb) && flag_ok(U(CFG_PROTO_VALUE_MSB_FIRST)) && inside(co, 1u, pl) &&
+           inside(vo, vb, pl) && apart(co, 1u, vo, vb);
+}
+
+static bool resp_fits(void)
+{
+    size_t pl = U(CFG_PROTO_RESP_PAYLOAD_LEN), vb = U(CFG_PROTO_RESP_VALUE_BYTES);
+    size_t co = U(CFG_PROTO_RESP_CODE_OFFSET), cc = U(CFG_PROTO_RESP_CMD_CODE_OFFSET);
+    size_t vo = U(CFG_PROTO_RESP_VALUE_OFFSET);
+    return width_ok(vb) && flag_ok(U(CFG_PROTO_VALUE_MSB_FIRST)) && inside(co, 1u, pl) &&
+           inside(cc, 1u, pl) && inside(vo, vb, pl) && apart(co, 1u, cc, 1u) &&
+           apart(co, 1u, vo, vb) && apart(cc, 1u, vo, vb);
+}
+
+static bool sample_fits(void)
+{
+    size_t ab = U(CFG_PROTO_SAMPLE_AXIS_BYTES);
+    return width_ok(ab) && ab * BITS_PER_BYTE >= (size_t)ADXL355_SAMPLE_BITS &&
+           flag_ok(U(CFG_PROTO_SAMPLE_MSB_FIRST));
+}
+
+static bool frame_ready(void) { return frame_decided() && frame_fits(); }
+static bool cmd_ready(void) { return frame_ready() && cmd_decided() && cmd_fits(); }
+static bool resp_ready(void) { return frame_ready() && resp_decided() && resp_fits(); }
+static bool sample_ready(void) { return frame_ready() && sample_decided() && sample_fits(); }
+
+/* ---- byte helpers -------------------------------------------------------- */
+
+static void put_uint(uint8_t *dst, uint32_t v, size_t n, bool msb_first)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        dst[msb_first ? (n - 1u - i) : i] = (uint8_t)(v & UINT8_MAX);
+        v >>= BITS_PER_BYTE;
+    }
+}
+
+static uint32_t get_uint(const uint8_t *src, size_t n, bool msb_first)
+{
+    uint32_t v = 0;
+    size_t i;
+    for (i = 0; i < n; i++) v = (v << BITS_PER_BYTE) | src[msb_first ? i : (n - 1u - i)];
+    return v;
+}
+
+/* true if v fits an unsigned field of n bytes */
+static bool fits_unsigned(uint64_t v, size_t n)
+{
+    if (n >= MAX_FIELD_BYTES) return v <= UINT32_MAX;
+    return v < ((uint64_t)1 << (BITS_PER_BYTE * n));
+}
+
+/* true if v fits a two's complement field of n bytes */
+static bool fits_signed(int32_t v, size_t n)
+{
+    int64_t half;
+    if (n >= MAX_FIELD_BYTES) return true;
+    half = (int64_t)1 << (BITS_PER_BYTE * n - 1u);
+    return (int64_t)v >= -half && (int64_t)v < half;
+}
+
+/* ---- frame build --------------------------------------------------------- */
+
+/* Size checks before any byte is written; pad-fills header + payload when they pass. */
+static protocol_rc_t frame_begin(size_t payload_len, uint8_t *out, size_t out_cap)
+{
+    size_t hl = U(CFG_PROTO_HEADER_LEN), i;
+    if (U(CFG_PROTO_CHECKSUM_KIND) != U(CFG_PROTO_CHECKSUM_NONE)) return PROTOCOL_ERR_NOT_IMPLEMENTED;
+    if (payload_len > U(CFG_PROTO_MAX_PAYLOAD)) return PROTOCOL_ERR_TOO_LONG;
+    if (!fits_unsigned((uint64_t)payload_len, U(CFG_PROTO_LENGTH_FIELD_BYTES))) return PROTOCOL_ERR_TOO_LONG;
+    if (payload_len > out_cap || hl > out_cap - payload_len) return PROTOCOL_ERR_TOO_LONG;
+    for (i = 0; i < hl + payload_len; i++) out[i] = (uint8_t)(uint32_t)CFG_PROTO_PAD_BYTE;
+    return PROTOCOL_OK;
+}
+
+/* Write the header fields once the payload is in place at out + header length. */
+static void frame_end(uint8_t type, size_t payload_len, uint8_t *out, size_t *out_len)
+{
+    out[U(CFG_PROTO_SYNC_OFFSET)] = (uint8_t)(uint32_t)CFG_PROTO_SYNC;
+    out[U(CFG_PROTO_TYPE_OFFSET)] = type;
+    put_uint(&out[U(CFG_PROTO_LENGTH_OFFSET)], (uint32_t)payload_len, U(CFG_PROTO_LENGTH_FIELD_BYTES),
+             U(CFG_PROTO_LENGTH_MSB_FIRST) == 1u);
+    *out_len = U(CFG_PROTO_HEADER_LEN) + payload_len;
+}
+
+/* ---- public API ---------------------------------------------------------- */
+
+protocol_rc_t protocol_encode_sample_batch(const adxl355_sample_t *samples, size_t count,
+                                           uint8_t *out, size_t out_cap, size_t *out_len)
+{
+    size_t ab, sb, pl, i, base;
+    bool msb;
+    uint8_t *p;
+    protocol_rc_t rc;
+
+    if ((samples == NULL && count != 0) || out == NULL || out_len == NULL) return PROTOCOL_ERR_ARG;
+    *out_len = 0;
+    if (!sample_ready()) return PROTOCOL_ERR_TBD;
+    ab = U(CFG_PROTO_SAMPLE_AXIS_BYTES);
+    msb = U(CFG_PROTO_SAMPLE_MSB_FIRST) == 1u;
+    sb = SAMPLE_AXES * ab;
+    if (count > U(CFG_PROTO_MAX_PAYLOAD) / sb) return PROTOCOL_ERR_TOO_LONG;
+    for (i = 0; i < count; i++) {
+        if (!fits_signed(samples[i].x, ab) || !fits_signed(samples[i].y, ab) ||
+            !fits_signed(samples[i].z, ab))
+            return PROTOCOL_ERR_TOO_LONG;
+    }
+    pl = count * sb;
+    rc = frame_begin(pl, out, out_cap);
+    if (rc != PROTOCOL_OK) return rc;
+
+    p = &out[U(CFG_PROTO_HEADER_LEN)];
+    for (i = 0, base = 0; i < count; i++, base += sb) {
+        put_uint(&p[base], (uint32_t)samples[i].x, ab, msb);
+        put_uint(&p[base + ab], (uint32_t)samples[i].y, ab, msb);
+        put_uint(&p[base + 2u * ab], (uint32_t)samples[i].z, ab, msb);
+    }
+    frame_end((uint8_t)(uint32_t)CFG_PROTO_TYPE_SAMPLE_BATCH, pl, out, out_len);
+    return PROTOCOL_OK;
+}
+
+protocol_rc_t protocol_encode_response(const protocol_response_t *resp,
+                                       uint8_t *out, size_t out_cap, size_t *out_len)
+{
+    size_t pl, vb;
+    uint8_t *p;
+    protocol_rc_t rc;
+
+    if (resp == NULL || out == NULL || out_len == NULL) return PROTOCOL_ERR_ARG;
+    *out_len = 0;
+    if (!resp_ready()) return PROTOCOL_ERR_TBD;
+    pl = U(CFG_PROTO_RESP_PAYLOAD_LEN);
+    vb = U(CFG_PROTO_RESP_VALUE_BYTES);
+    if (!fits_unsigned(resp->value, vb)) return PROTOCOL_ERR_TOO_LONG;
+    rc = frame_begin(pl, out, out_cap);
+    if (rc != PROTOCOL_OK) return rc;
+    p = &out[U(CFG_PROTO_HEADER_LEN)];
+    p[U(CFG_PROTO_RESP_CODE_OFFSET)] = resp->code;
+    p[U(CFG_PROTO_RESP_CMD_CODE_OFFSET)] = resp->cmd_code;
+    put_uint(&p[U(CFG_PROTO_RESP_VALUE_OFFSET)], resp->value, vb, U(CFG_PROTO_VALUE_MSB_FIRST) == 1u);
+    frame_end((uint8_t)(uint32_t)CFG_PROTO_TYPE_RESPONSE, pl, out, out_len);
+    return PROTOCOL_OK;
+}
+
+protocol_rc_t protocol_encode_command(const protocol_command_t *cmd,
+                                      uint8_t *out, size_t out_cap, size_t *out_len)
+{
+    size_t pl, vb;
+    uint8_t *p;
+    protocol_rc_t rc;
+
+    if (cmd == NULL || out == NULL || out_len == NULL) return PROTOCOL_ERR_ARG;
+    *out_len = 0;
+    if (!cmd_ready()) return PROTOCOL_ERR_TBD;
+    pl = U(CFG_PROTO_CMD_PAYLOAD_LEN);
+    vb = U(CFG_PROTO_CMD_VALUE_BYTES);
+    if (!fits_unsigned(cmd->value, vb)) return PROTOCOL_ERR_TOO_LONG;
+    rc = frame_begin(pl, out, out_cap);
+    if (rc != PROTOCOL_OK) return rc;
+    p = &out[U(CFG_PROTO_HEADER_LEN)];
+    p[U(CFG_PROTO_CMD_CODE_OFFSET)] = cmd->code;
+    put_uint(&p[U(CFG_PROTO_CMD_VALUE_OFFSET)], cmd->value, vb, U(CFG_PROTO_VALUE_MSB_FIRST) == 1u);
+    frame_end((uint8_t)(uint32_t)CFG_PROTO_TYPE_COMMAND, pl, out, out_len);
+    return PROTOCOL_OK;
+}
+
+protocol_rc_t protocol_decode_frame(const uint8_t *in, size_t in_len,
+                                    protocol_frame_t *frame, size_t *consumed)
+{
+    size_t hl, so, pl, i;
+    uint8_t type, sync;
+
+    if (in == NULL || frame == NULL || consumed == NULL) return PROTOCOL_ERR_ARG;
+    *consumed = 0;
+    if (!frame_ready()) return PROTOCOL_ERR_TBD;
+    hl = U(CFG_PROTO_HEADER_LEN);
+    so = U(CFG_PROTO_SYNC_OFFSET);
+    sync = (uint8_t)(uint32_t)CFG_PROTO_SYNC;
+
+    /* resync: a frame start p has its sync byte at p + so. Drop the starts before the next
+     * candidate; with no candidate, drop every start whose sync byte is already in view. */
+    if (in_len <= so) return PROTOCOL_ERR_SHORT;
+    if (in[so] != sync) {
+        for (i = 1; i + so < in_len && in[i + so] != sync; i++) {}
+        *consumed = (i + so < in_len) ? i : in_len - so;
+        return PROTOCOL_ERR_SYNC;
+    }
+    if (in_len < hl) return PROTOCOL_ERR_SHORT;
+
+    type = in[U(CFG_PROTO_TYPE_OFFSET)];
+    pl = (size_t)get_uint(&in[U(CFG_PROTO_LENGTH_OFFSET)], U(CFG_PROTO_LENGTH_FIELD_BYTES),
+                          U(CFG_PROTO_LENGTH_MSB_FIRST) == 1u);
+    if (pl > U(CFG_PROTO_MAX_PAYLOAD)) {
+        *consumed = 1;
+        return PROTOCOL_ERR_TOO_LONG;
+    }
+    if (U(CFG_PROTO_CHECKSUM_KIND) != U(CFG_PROTO_CHECKSUM_NONE)) return PROTOCOL_ERR_NOT_IMPLEMENTED;
+    if (in_len - hl < pl) return PROTOCOL_ERR_SHORT;
+
+    if (type != (uint8_t)(uint32_t)CFG_PROTO_TYPE_SAMPLE_BATCH &&
+        type != (uint8_t)(uint32_t)CFG_PROTO_TYPE_COMMAND &&
+        type != (uint8_t)(uint32_t)CFG_PROTO_TYPE_RESPONSE) {
+        *consumed = 1;
+        return PROTOCOL_ERR_TYPE;
+    }
+
+    frame->type = type;
+    frame->payload = &in[hl];
+    frame->payload_len = pl;
+    *consumed = hl + pl;
+    return PROTOCOL_OK;
+}
+
+protocol_rc_t protocol_decode_command(const uint8_t *payload, size_t len, protocol_command_t *cmd)
+{
+    if (payload == NULL || cmd == NULL) return PROTOCOL_ERR_ARG;
+    if (!cmd_ready()) return PROTOCOL_ERR_TBD;
+    if (len != U(CFG_PROTO_CMD_PAYLOAD_LEN)) return PROTOCOL_ERR_SHORT;
+    cmd->code = payload[U(CFG_PROTO_CMD_CODE_OFFSET)];
+    cmd->value = get_uint(&payload[U(CFG_PROTO_CMD_VALUE_OFFSET)], U(CFG_PROTO_CMD_VALUE_BYTES),
+                          U(CFG_PROTO_VALUE_MSB_FIRST) == 1u);
+    return PROTOCOL_OK;
+}
