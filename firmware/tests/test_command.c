@@ -20,6 +20,24 @@ static int g_fail;
                  CFG_IS_TBD(CFG_PROTO_LENGTH_FIELD_BYTES) || CFG_IS_TBD(CFG_PROTO_CHECKSUM_KIND) || \
                  CFG_IS_TBD(CFG_PROTO_MAX_PAYLOAD) || CFG_IS_TBD(CFG_PROTO_TYPE_SAMPLE_BATCH) || \
                  CFG_IS_TBD(CFG_PROTO_TYPE_COMMAND) || CFG_IS_TBD(CFG_PROTO_TYPE_RESPONSE) || \
+                 CFG_IS_TBD(CFG_PROTO_SYNC_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_TYPE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_LENGTH_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_LENGTH_MSB_FIRST) || \
+                 CFG_IS_TBD(CFG_PROTO_PAD_BYTE) || \
+                 CFG_IS_TBD(CFG_PROTO_CHECKSUM_NONE) || \
+                 CFG_IS_TBD(CFG_PROTO_CMD_PAYLOAD_LEN) || \
+                 CFG_IS_TBD(CFG_PROTO_CMD_CODE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_BYTES) || \
+                 CFG_IS_TBD(CFG_PROTO_RESP_PAYLOAD_LEN) || \
+                 CFG_IS_TBD(CFG_PROTO_RESP_CODE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_RESP_CMD_CODE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_OFFSET) || \
+                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_BYTES) || \
+                 CFG_IS_TBD(CFG_PROTO_VALUE_MSB_FIRST) || \
+                 CFG_IS_TBD(CFG_PROTO_SAMPLE_AXIS_BYTES) || \
+                 CFG_IS_TBD(CFG_PROTO_SAMPLE_MSB_FIRST) || \
                  CFG_IS_TBD(CFG_PROTO_CMD_SET_ODR) || CFG_IS_TBD(CFG_PROTO_CMD_SET_RANGE) || \
                  CFG_IS_TBD(CFG_PROTO_CMD_SET_FILTER) || CFG_IS_TBD(CFG_PROTO_RESP_ACK) || \
                  CFG_IS_TBD(CFG_PROTO_RESP_ERROR) || CFG_IS_TBD(CFG_PROTO_RESP_STATUS))
