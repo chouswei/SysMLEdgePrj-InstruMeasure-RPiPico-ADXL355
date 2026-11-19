@@ -124,9 +124,9 @@ int main(void)
     (void)fsm_rc;
     (void)sample_buffer_init(&g_buf);
 
-    /* adxl355 register contract is TODO(TBD) (adxl355_regs.h). Without decided
-     * SPI constants the driver is not initialised; with them, an ADXL355_ERR_TBD
-     * or any other init failure leaves dev_rc non-OK, and acq_step reports it
+    /* adxl355 registers are cited from no-OS (adxl355_regs.h). Without decided
+     * SPI constants the driver is not initialised; with them, an ADXL355_ERR_*
+     * init failure leaves dev_rc non-OK, and acq_step reports it
      * (ACQ_ERR_TBD / ACQ_ERR_SENSOR). No register value is invented here. */
     adxl355_rc_t dev_rc = ADXL355_ERR_NOT_INIT;
     if (spi_constants_decided()) {

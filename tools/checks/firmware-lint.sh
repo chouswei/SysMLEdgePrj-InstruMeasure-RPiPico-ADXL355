@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # firmware-lint.sh : static rules for firmware/ (run from anywhere). Exit 0 only if all hold.
 #  (a) no pico/, hardware/ or tusb include outside firmware/src/main.c
-#  (b) every #define in adxl355_regs.h cites "Datasheet Rev. D" + Section/Table, or is TODO(TBD)
+#  (b) every #define in adxl355_regs.h cites "no-OS H:<line>" / "no-OS C:<line>" (adxl355_regs.h pins
+#      the commit) or "Datasheet Rev. D" + Section/Table, or is TODO(TBD)
 #  (c) no numeric TODO(TBD) define outside config.h (adxl355_regs.h is the one other home:
 #      its TBD entries are register sentinels/flags per the A1 contract, see docs/protocol.md)
 #  (d) the DRDY pin is never set as output or driven
@@ -22,7 +23,7 @@ REGS=include/adxl355_regs.h
 if [ -f "$REGS" ]; then
   while IFS=: read -r ln rest; do
     prev=$(sed -n "$((ln-1))p" "$REGS")
-    echo "$rest$prev" | grep -qE 'TODO\(TBD\)|Datasheet Rev\. D.*([Ss]ection|[Tt]able)' || bad b "$REGS:$ln uncited define"
+    echo "$rest$prev" | grep -qE 'TODO\(TBD\)|no-OS [HC]:[0-9]+|Datasheet Rev\. D.*([Ss]ection|[Tt]able)' || bad b "$REGS:$ln uncited define"
   done < <(grep -nE '^[[:space:]]*#[[:space:]]*define' "$REGS")
 else
   bad b "$REGS missing"
