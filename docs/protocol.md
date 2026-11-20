@@ -314,6 +314,8 @@ Requirements PICO355-R8 and PICO355-R9 (HMI). Design decisions are labelled `(ow
 - Chart windows 2 / 5 / 10 s (`WINDOW_CHOICES_S`) (design decision (owner t43s2)).
 - Three stacked charts, one per axis, with vertical axis labels `X (g)`, `Y (g)`, `Z (g)` (`axis_label`). Charts never
   show raw counts; the envelope values used for plotting are g (`SampleStore::envelope`, `min_g` / `max_g`).
+  Each chart draws exactly one single-color line: the min/max buckets joined into one oscilloscope polyline
+  (`envelope_trace`, color `axis_color`).
 
 ### Port discovery
 

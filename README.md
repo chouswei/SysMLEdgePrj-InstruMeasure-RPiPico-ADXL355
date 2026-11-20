@@ -44,7 +44,7 @@ cargo run --manifest-path hmi/Cargo.toml -- [--port <path>]
 
 `--port <path>` preselects the port. The window has:
 
-- Stacked live X, Y and Z charts. The vertical axis is in g, labelled `X (g)`, `Y (g)` and `Z (g)`. Each value is computed from the 20-bit signed raw counts with the no-OS sensitivity for the active range: 3.9e-6 g per LSB at 2 g, multiplied by 2 at 4 g and by 4 at 8 g (`hmi/src/scale.rs`; cited to `adxl355.h:62-65` and `adxl355.c:920-930` of the no-OS pin `4557b1f58f8a233bd116dbb02d8d5c447d3699b6`). The LSB-per-g value is a derived reciprocal.
+- Stacked live X, Y and Z charts. The vertical axis is in g, labelled `X (g)`, `Y (g)` and `Z (g)`. Each value is computed from the 20-bit signed raw counts with the no-OS sensitivity for the active range: 3.9e-6 g per LSB at 2 g, multiplied by 2 at 4 g and by 4 at 8 g (`hmi/src/scale.rs`; cited to `adxl355.h:62-65` and `adxl355.c:920-930` of the no-OS pin `4557b1f58f8a233bd116dbb02d8d5c447d3699b6`). The LSB-per-g value is a derived reciprocal. Each chart draws one single-color min/max oscilloscope trace (one line per axis, `envelope_trace` and `axis_color` in `hmi/src/gui.rs`).
 - A COM port dropdown with refresh, and a custom path field. The Pico (USB VID 2E8A, PID 000A) is highlighted.
 - Controls for ODR (4000, 2000, 1000, 500, 250 and 125 Hz), range (2, 4 and 8 g) and high-pass (codes 0 to 6), each with an explicit Apply. The last ACK or ERR from the firmware is shown.
 - Status: measured rate, sample count and FIFO overflow count, from `CMD_GET_STATUS` polled about once per second (and on manual refresh).
