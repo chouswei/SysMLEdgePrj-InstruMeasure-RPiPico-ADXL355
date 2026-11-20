@@ -82,3 +82,67 @@ fn control_locked_table() {
     assert!(!control_locked(Control::Port, true));
     assert!(!control_locked(Control::Port, false));
 }
+
+// ---- PendingSettings (fix for review must-fix 1: firmware ACK value is always 0,
+// firmware/src/command.c:142, so applied settings come from the value sent, not Ack.value) ----
+use pico355_hmi::config::link;
+use pico355_hmi::worker::WorkerCommand;
+
+#[test]
+fn pending_fifo_per_code() {
+    let mut p = PendingSettings::new();
+    p.record(&WorkerCommand::SetOdr(1000));
+    p.record(&WorkerCommand::SetOdr(2000));
+    p.record(&WorkerCommand::SetRange(3));
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), Some(1000));
+    assert_eq!(p.take_acked(link::CMD_SET_RANGE), Some(3));
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), Some(2000));
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), None);
+}
+
+#[test]
+fn pending_take_acked_returns_sent_value() {
+    let mut p = PendingSettings::new();
+    p.record(&WorkerCommand::SetFilter(5));
+    assert_eq!(p.take_acked(link::CMD_SET_FILTER), Some(5));
+    assert_eq!(p.take_acked(link::CMD_SET_FILTER), None);
+}
+
+#[test]
+fn pending_take_acked_nothing_pending_is_none() {
+    let mut p = PendingSettings::new();
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), None);
+    assert_eq!(p.take_acked(link::CMD_SET_RANGE), None);
+    assert_eq!(p.take_acked(link::CMD_SET_FILTER), None);
+}
+
+#[test]
+fn pending_drop_nacked_discards_oldest() {
+    let mut p = PendingSettings::new();
+    p.record(&WorkerCommand::SetRange(1));
+    p.record(&WorkerCommand::SetRange(2));
+    p.drop_nacked(link::CMD_SET_RANGE);
+    assert_eq!(p.take_acked(link::CMD_SET_RANGE), Some(2));
+    assert_eq!(p.take_acked(link::CMD_SET_RANGE), None);
+    p.drop_nacked(link::CMD_SET_RANGE); // nothing pending: no panic
+}
+
+#[test]
+fn pending_get_status_not_recorded() {
+    let mut p = PendingSettings::new();
+    p.record(&WorkerCommand::GetStatus);
+    assert_eq!(p.take_acked(link::CMD_GET_STATUS), None);
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), None);
+}
+
+#[test]
+fn pending_ack_value_zero_scenario() {
+    // Firmware ACKs carry value 0; the applied setting must be the sent value.
+    let mut p = PendingSettings::new();
+    p.record(&WorkerCommand::SetOdr(4000));
+    p.record(&WorkerCommand::SetRange(2));
+    let ack_value = 0u32; // as sent by firmware, deliberately ignored
+    let _ = ack_value;
+    assert_eq!(p.take_acked(link::CMD_SET_ODR), Some(4000));
+    assert_eq!(p.take_acked(link::CMD_SET_RANGE), Some(2));
+}
