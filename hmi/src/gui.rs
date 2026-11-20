@@ -7,6 +7,7 @@
 //! attributes stay true. The chart vertical axes are in g (`axis_label`), never raw counts.
 //! TBD: native file picker (the log path is an editable text field), log rotation.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -95,6 +96,53 @@ pub fn control_locked(control: Control, logging: bool) -> bool {
     }
 }
 
+/// Settings commands sent and not yet ACKed/NACKed, one FIFO per command code. The firmware
+/// ACK carries value 0 (firmware/src/command.c:142), so an ACKed setting is the value that was
+/// sent, taken oldest-first, never `Ack.value`.
+#[derive(Debug, Default)]
+pub struct PendingSettings {
+    odr: VecDeque<u32>,
+    range: VecDeque<u32>,
+    filter: VecDeque<u32>,
+}
+
+impl PendingSettings {
+    pub fn new() -> PendingSettings {
+        PendingSettings::default()
+    }
+
+    fn queue(&mut self, code: u8) -> Option<&mut VecDeque<u32>> {
+        match code {
+            link::CMD_SET_ODR => Some(&mut self.odr),
+            link::CMD_SET_RANGE => Some(&mut self.range),
+            link::CMD_SET_FILTER => Some(&mut self.filter),
+            _ => None,
+        }
+    }
+
+    /// Record a sent command; `GetStatus` is not recorded.
+    pub fn record(&mut self, cmd: &WorkerCommand) {
+        match cmd {
+            WorkerCommand::SetOdr(v) => self.odr.push_back(*v),
+            WorkerCommand::SetRange(v) => self.range.push_back(*v as u32),
+            WorkerCommand::SetFilter(v) => self.filter.push_back(*v as u32),
+            WorkerCommand::GetStatus => {}
+        }
+    }
+
+    /// Oldest sent value for `cmd_code` (on ACK), or None.
+    pub fn take_acked(&mut self, cmd_code: u8) -> Option<u32> {
+        self.queue(cmd_code).and_then(|q| q.pop_front())
+    }
+
+    /// Discard the oldest sent value for `cmd_code` (on NACK).
+    pub fn drop_nacked(&mut self, cmd_code: u8) {
+        if let Some(q) = self.queue(cmd_code) {
+            q.pop_front();
+        }
+    }
+}
+
 fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
@@ -134,6 +182,7 @@ pub struct HmiApp {
     log_path: String,
     log_msg: String,
     wake_ctx: Option<egui::Context>,
+    pending: PendingSettings,
 }
 
 impl HmiApp {
@@ -166,6 +215,7 @@ impl HmiApp {
             log_path: default_log_filename(now_unix()),
             log_msg: String::new(),
             wake_ctx: None,
+            pending: PendingSettings::new(),
         }
     }
 
@@ -184,6 +234,7 @@ impl HmiApp {
 
     fn send(&mut self, cmd: WorkerCommand) {
         if let Some(w) = &self.worker {
+            self.pending.record(&cmd);
             if w.send(cmd).is_err() {
                 self.last_msg = String::from("ERR: worker ended");
             }
@@ -205,6 +256,7 @@ impl HmiApp {
                 self.rx_index = 0;
                 self.overflow = None;
                 self.hpf_applied = None;
+                self.pending = PendingSettings::new();
                 self.range_acked = false;
                 self.active_range = self.sel_range;
                 self.active_odr = self.sel_odr;
@@ -293,19 +345,23 @@ impl HmiApp {
                 }
                 WorkerEvent::Ack { cmd_code, value } => {
                     self.last_msg = format!("ACK cmd 0x{cmd_code:02X} value {value}");
-                    match cmd_code {
-                        link::CMD_SET_RANGE => {
-                            if scale::range_g(value as u8).is_some() {
-                                self.active_range = value as u8;
-                                self.range_acked = true;
+                    // The ACK value is always 0: apply the value that was sent.
+                    if let Some(sent) = self.pending.take_acked(cmd_code) {
+                        match cmd_code {
+                            link::CMD_SET_RANGE => {
+                                if scale::range_g(sent as u8).is_some() {
+                                    self.active_range = sent as u8;
+                                    self.range_acked = true;
+                                }
                             }
+                            link::CMD_SET_ODR => self.active_odr = sent,
+                            link::CMD_SET_FILTER => self.hpf_applied = Some(sent as u8),
+                            _ => {}
                         }
-                        link::CMD_SET_ODR => self.active_odr = value,
-                        link::CMD_SET_FILTER => self.hpf_applied = Some(value as u8),
-                        _ => {}
                     }
                 }
                 WorkerEvent::Nack { cmd_code, value } => {
+                    self.pending.drop_nacked(cmd_code);
                     self.last_msg = format!("ERR (nack) cmd 0x{cmd_code:02X} value {value}");
                 }
                 WorkerEvent::Status { overflow_count } => {
