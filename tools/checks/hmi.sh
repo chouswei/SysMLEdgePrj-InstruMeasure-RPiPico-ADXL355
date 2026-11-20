@@ -5,3 +5,5 @@ set -euo pipefail
 cd "$(dirname "$0")/../../hmi"
 cargo build
 cargo test
+cd ..
+bash tools/checks/gui-docs.sh
