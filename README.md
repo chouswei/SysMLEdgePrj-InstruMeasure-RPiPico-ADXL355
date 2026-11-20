@@ -14,7 +14,7 @@ The owner merges every PR.
 
 ## Build, flash and run
 
-Status: the firmware builds and the host tests pass. The ADXL355B register map is filled from the Analog Devices no-OS driver (`firmware/include/adxl355_regs.h`, pinned commit, every value cited), but no sensor data flows until the other TBDs below (SPI clock and mode, frame layout, command set, state table) are decided and the sequences are tried on hardware.
+Status: the firmware builds and the host tests pass (host encode/decode round trip with identical golden bytes in firmware and HMI tests). SPI0 settings and the post-reset delay are cited to the Analog Devices no-OS pin; the USB CDC link, frame layout, command set and boot state table are design decisions (2026-11-19, owner go t37u), all in `docs/protocol.md` "Settled link values". **Not yet run on hardware:** flash `pico355_fw.uf2`, then run `pico355-hmi --port COM5` on Windows (or the port path on Linux); that step is the owner's.
 
 ### Firmware build (Pico SDK, CMake)
 
@@ -42,7 +42,7 @@ cargo run --manifest-path hmi/Cargo.toml -- --port <path> [--odr <hz>]
 
 `--help` prints the usage. `--odr` is optional; the default comes from `CFG_DEFAULT_ODR_HZ` (4000 Hz, PICO355-R1).
 
-Until the serial settings are decided (`SERIAL_BAUD` in `hmi/src/tbd.rs` is TODO(TBD)), the binary opens no port: it exits with a TBD link error. Only `--help` and the tests are useful today.
+The HMI opens the port (settings in `hmi/src/config.rs` `link`: 8N1, DTR asserted), sends set-ODR, and prints one `x y z` raw-count line per decoded sample, plus `response: ...` for the firmware's ACK. Log output is still TODO(TBD): the first batch prints one `logging stopped` line on stderr.
 
 ### Check scripts
 
@@ -61,18 +61,13 @@ Run from the repository root. Each script exits non-zero on failure.
 
 Each item is a single-place placeholder with a `TODO(TBD)` comment. Do not fill one in without a source (model files, AGENTS.md, the ADXL355 datasheet Rev. D, or for ADXL355 registers the no-OS driver at the commit named in `adxl355_regs.h`).
 
-- ADXL355 entries the no-OS driver does not define (`ADXL355_FIFO_CAPACITY`, post-reset delay and shadow compare): `firmware/include/adxl355_regs.h`, `docs/protocol.md`
-- SPI clock, SPI mode and FIFO watermark: `firmware/include/config.h`
+- ADXL355 entries the no-OS driver does not define (`ADXL355_FIFO_CAPACITY`): `firmware/include/adxl355_regs.h`, `docs/protocol.md`
+- FIFO watermark: `firmware/include/config.h`
 - Sensor supply, LDO output check (PICO355-R3): `firmware/include/config.h`
-- Sample buffer depth and overflow policy: `firmware/include/config.h`
-- USB frame format (sync, header length, length field width, checksum kind, maximum payload, frame type ids): `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
-- USB frame layout (`CFG_PROTO_*` offsets, widths, byte order, pad byte, checksum-none code, command/response payload layout, sample encoding width and byte order; table in `docs/protocol.md` "Frame layout"): `firmware/include/config.h`, `hmi/src/tbd.rs`
-- USB scratch buffer sizes (`CFG_USB_FRAME_BUF_BYTES`, `CFG_USB_RX_BUF_BYTES`, placeholder 64): `firmware/include/config.h`
-- Command set and response codes: `firmware/include/config.h`, `hmi/src/tbd.rs`, `docs/protocol.md`
-- State transition details: `firmware/include/config.h`
+- Buffer overflow policy: `firmware/include/config.h`
 - Cable pinout (X5 assumed straight 1:1): `firmware/include/config.h`
-- Default range and default filter: `firmware/include/config.h`
-- HMI form, log format, serial settings, port discovery, live view refresh: `hmi/src/tbd.rs`, `docs/protocol.md`
+- Default filter, and the model/HMI default range (the firmware streams at a design-choice 2 g): `firmware/include/config.h`
+- HMI form beyond the plain text view, log format, port discovery, live view refresh: `hmi/src/tbd.rs`, `docs/protocol.md`
 
 ### Requirement trace
 

@@ -38,7 +38,8 @@ static usb_stream_rc_t send_frame(usb_stream_t *us, size_t len)
 usb_stream_rc_t usb_stream_send_batch(usb_stream_t *us, sample_buffer_t *buf,
                                       size_t max_samples, size_t *sent)
 {
-    adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH]; /* buffer never holds more than its depth */
+    /* static: 64 x 12 B would take 768 B of the 2 KB default RP2040 stack; one streamer sends at a time */
+    static adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH]; /* buffer never holds more than its depth */
     size_t n = 0, len = 0, i;
     protocol_rc_t prc;
     usb_stream_rc_t rc;

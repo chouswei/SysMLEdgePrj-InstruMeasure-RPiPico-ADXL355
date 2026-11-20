@@ -1,7 +1,7 @@
 /*
  * test_fsm.c - host test for firmware/src/fsm.c (PICO355-R7).
  * Rules from fsm.h. The transition tables below are TEST DATA passed to fsm_init();
- * they are not the design's transitions (those stay TODO(TBD) in config.h).
+ * they are test data; the shipped table is checked in default_table() below.
  */
 #include <stdio.h>
 
@@ -22,6 +22,23 @@ static const fsm_transition_t g_dup[] = {      /* first matching row wins */
     { FSM_STATE_IDLE, FSM_EV_CONFIG_COMMAND, FSM_STATE_STREAMING },
     { FSM_STATE_IDLE, FSM_EV_CONFIG_COMMAND, FSM_STATE_FAULT }
 };
+
+/* The shipped config.h table (design decision 2026-11-19, owner go t37u): boot reaches STREAMING,
+ * a command while streaming reconfigures and resumes, a stream error faults, a command recovers. */
+static void default_table(void)
+{
+    fsm_t f;
+    fsm_state_t n;
+    CHECK(fsm_init_default(&f) == FSM_OK);
+    CHECK(fsm_state(&f) == FSM_STATE_IDLE);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_COMMAND, &n) == FSM_OK && n == FSM_STATE_CONFIGURING);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_DONE, &n) == FSM_OK && n == FSM_STATE_STREAMING);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_COMMAND, &n) == FSM_OK && n == FSM_STATE_CONFIGURING);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_DONE, &n) == FSM_OK && n == FSM_STATE_STREAMING);
+    CHECK(fsm_dispatch(&f, FSM_EV_STREAM_ERROR, &n) == FSM_OK && n == FSM_STATE_FAULT);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_COMMAND, &n) == FSM_OK && n == FSM_STATE_CONFIGURING);
+    CHECK(fsm_dispatch(&f, FSM_EV_CONFIG_FAILED, &n) == FSM_OK && n == FSM_STATE_IDLE);
+}
 
 static void init_cases(void)
 {
@@ -49,13 +66,8 @@ static void init_cases(void)
 
 static void default_cases(void)
 {
-    fsm_t f;
     CHECK(fsm_init_default(NULL) == FSM_ERR_ARG);
-    /* config.h defaults: while initial state or policy is still the UNSET sentinel -> TBD */
-    if (CFG_FSM_INITIAL_STATE == FSM_STATE_UNSET || CFG_FSM_UNKNOWN_EVENT_POLICY == FSM_POLICY_UNSET) {
-        CHECK(fsm_init_default(&f) == FSM_ERR_TBD);
-        CHECK(fsm_state(&f) == FSM_STATE_UNSET);
-    }
+    default_table();
 }
 
 static void dispatch_cases(void)

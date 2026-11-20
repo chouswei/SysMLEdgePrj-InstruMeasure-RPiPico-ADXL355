@@ -3,7 +3,9 @@
  *
  * Requirement: PICO355-R4 (read samples over SPI0 only when DRDY on GP22 signals
  * new data; INT1/INT2 unconnected). DRDY edge and polling vs interrupt: TODO(TBD).
- * FIFO watermark: TODO(TBD) (CFG_FIFO_WATERMARK). TBD rule: an ADXL355_ERR_TBD
+ * FIFO drain: on a DRDY high the driver reads FIFO_ENTRIES and drains at or above the watermark
+ * (CFG_FIFO_WATERMARK, CFG_FIFO_TRIGGER, design decision (owner t39u)); after a drain STATUS is read once
+ * so FIFO_OVR is counted in the driver. TBD rule: an ADXL355_ERR_TBD
  * from the driver is returned as ACQ_ERR_TBD with *pushed = 0 and the buffer
  * untouched; DRDY low returns ACQ_OK with *pushed = 0. main.c binds acq_hal_t to the
  * SDK GPIO read of CFG_PIN_DRDY_IN (input only, never driven).

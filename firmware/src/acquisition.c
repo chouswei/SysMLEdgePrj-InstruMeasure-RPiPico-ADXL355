@@ -12,7 +12,8 @@ acq_rc_t acq_init(acq_t *acq, const acq_hal_t *hal, adxl355_t *dev, sample_buffe
 
 acq_rc_t acq_step(acq_t *acq, size_t *pushed)
 {
-    adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH];
+    /* static: 64 x 12 B would take 768 B of the 2 KB default RP2040 stack; one acq_t runs at a time */
+    static adxl355_sample_t batch[CFG_SAMPLE_BUFFER_DEPTH];
     size_t n_read = 0;
     size_t i;
     bool overflow = false;
@@ -28,6 +29,15 @@ acq_rc_t acq_step(acq_t *acq, size_t *pushed)
     rc = adxl355_read_fifo(acq->dev, batch, CFG_SAMPLE_BUFFER_DEPTH, &n_read);
     if (rc == ADXL355_ERR_TBD) return ACQ_ERR_TBD;   /* TBD rule 3: propagate, buffer untouched */
     if (rc != ADXL355_OK || n_read > CFG_SAMPLE_BUFFER_DEPTH) return ACQ_ERR_SENSOR;
+
+    /* After a drain, read STATUS once so a FIFO_OVR is counted (adxl355_status; design decision (owner t39u)).
+     * Below the watermark nothing was drained and no STATUS read is made. */
+    if (n_read > 0) {
+        uint8_t status;
+        rc = adxl355_status(acq->dev, &status);
+        if (rc == ADXL355_ERR_TBD) return ACQ_ERR_TBD;
+        if (rc != ADXL355_OK) return ACQ_ERR_SENSOR;
+    }
 
     for (i = 0; i < n_read; i++) {
         sample_buffer_rc_t brc = sample_buffer_push(acq->buf, &batch[i]);

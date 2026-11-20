@@ -10,11 +10,16 @@
  * (cited as no-OS C:<line>): command byte C:46/C:81, ID check C:137-160, soft
  * reset C:270-300, set_op_mode C:228-240, set_range C:335-355, set_odr_lpf
  * C:366-410, set_hpf_corner C:417-460, get_raw_xyz C:512-545, get_sts_reg
- * C:641-655, FIFO read C:705-740, sample conversion C:891-925.
+ * C:641-655, FIFO entries C:664-668, FIFO_SAMPLES write C:678-692, FIFO read C:705-736
+ * (whole sets only C:714, X marker and empty tests C:724-725), sample conversion C:891-925.
+ * The FIFO drain itself (one CS-low window, TX byte repeated, RX with a leading dummy) follows
+ * pico-examples spi/spi_dma/spi_dma.c:74-85 and is bound to SPI0 DMA in main.c through
+ * adxl355_bus_t.fifo_read; without that hook one transfer() carries the same bytes.
  *
- * Not taken from no-OS (adxl355_bus_t has no delay hook and the driver keeps no
- * shadow-register baseline): the 1 ms delay and the shadow-register compare
- * after reset (no-OS C:297-308). TODO(TBD) owner decision if they are needed.
+ * The 1 ms post-reset delay is taken from no-OS C:297-298 (no_os_mdelay(1)) through the
+ * bus delay_ms hook, CFG_ADXL355_RESET_DELAY_MS, after NVM_BUSY clears and before the ID
+ * reads. Not taken from no-OS: the shadow-register compare after reset (no-OS C:300-308);
+ * the driver keeps no shadow-register baseline, the ID check below stands in for it.
  */
 #include "adxl355.h"
 #include "adxl355_regs.h"
@@ -39,9 +44,11 @@
     T(ADXL355_POWER_CTL_MEASURE_VAL))
 #define SAMPLE_TBD (IO_TBD || T(ADXL355_REG_XDATA3) || T(ADXL355_REG_YDATA3) || \
     T(ADXL355_REG_ZDATA3) || T(ADXL355_SAMPLE_SHIFT))
-#define FIFO_TBD (IO_TBD || T(ADXL355_REG_FIFO_ENTRIES) || T(ADXL355_REG_FIFO_DATA) || \
-    T(ADXL355_FIFO_X_MARKER) || T(ADXL355_FIFO_EMPTY) || T(ADXL355_SAMPLE_SHIFT))
-#define STATUS_TBD (IO_TBD || T(ADXL355_REG_STATUS))
+#define PARSE_TBD (T(ADXL355_FIFO_X_MARKER) || T(ADXL355_FIFO_EMPTY) || T(ADXL355_SAMPLE_SHIFT))
+#define FIFO_TBD (IO_TBD || PARSE_TBD || T(ADXL355_REG_FIFO_ENTRIES) || T(ADXL355_REG_FIFO_DATA) || \
+    T(ADXL355_FIFO_CAPACITY))
+#define WATERMARK_TBD (IO_TBD || T(ADXL355_REG_FIFO_SAMPLES) || T(ADXL355_FIFO_SAMPLES_MAX))
+#define STATUS_TBD (IO_TBD || T(ADXL355_REG_STATUS) || T(ADXL355_STATUS_FIFO_OVR))
 
 /* One FIFO sample is three 3-byte entries (X, Y, Z): no-OS C:716-735. */
 #define FIFO_SAMPLE_BYTES 9u
@@ -133,12 +140,15 @@ adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus)
     unsigned retries;
     adxl355_rc_t rc;
 
-    if (dev == NULL || bus == NULL || bus->transfer == NULL) return ADXL355_ERR_ARG;
+    if (dev == NULL || bus == NULL || bus->transfer == NULL || bus->delay_ms == NULL) return ADXL355_ERR_ARG;
     dev->bus = bus;
+    dev->fifo_hal = NULL;
     dev->config.odr_hz = CFG_DEFAULT_ODR_HZ;
     dev->config.range = CFG_DEFAULT_RANGE;
     dev->config.filter = CFG_IS_TBD(CFG_DEFAULT_FILTER) ? ADXL355_FILTER_UNSET : (int16_t)CFG_DEFAULT_FILTER;
     dev->initialised = false;
+    dev->fifo_watermark = 0u;
+    dev->fifo_overflows = 0u;
     if (INIT_TBD) return ADXL355_ERR_TBD;
 
     /* Soft reset: write the reset code, then poll STATUS until NVM_BUSY clears, 255 tries (no-OS C:270-295). */
@@ -151,6 +161,9 @@ adxl355_rc_t adxl355_init(adxl355_t *dev, const adxl355_bus_t *bus)
         if ((status & (uint8_t)ADXL355_STATUS_NVM_BUSY) == 0) break;
     } while (--retries != 0u);
     if (retries == 0u) return ADXL355_ERR_BUS;
+
+    /* Delay between the soft reset and the next register read (cited: no-OS C:297-298). */
+    bus->delay_ms(bus->ctx, (uint32_t)CFG_ADXL355_RESET_DELAY_MS);
 
     /* ID check: DEVID_AD, DEVID_MST, PARTID against their reset values (no-OS C:137-160). */
     rc = reg_read(bus, (uint8_t)ADXL355_REG_DEVID_AD, &v, 1u);
@@ -239,11 +252,48 @@ adxl355_rc_t adxl355_read_sample(adxl355_t *dev, adxl355_sample_t *out)
     return ADXL355_OK;
 }
 
+/* FIFO entry helpers: third byte bit 0 = X marker, bit 1 = empty (no-OS C:724-725). */
+static bool entry_is_x(const uint8_t *e)
+{
+    return (e[2] & (uint8_t)ADXL355_FIFO_X_MARKER) != 0 && (e[2] & (uint8_t)ADXL355_FIFO_EMPTY) == 0;
+}
+static bool entry_is_plain(const uint8_t *e)
+{
+    return (e[2] & (uint8_t)ADXL355_FIFO_X_MARKER) == 0 && (e[2] & (uint8_t)ADXL355_FIFO_EMPTY) == 0;
+}
+
+adxl355_rc_t adxl355_fifo_parse(const uint8_t *raw, size_t n_entries, adxl355_sample_t *out, size_t max, size_t *n_out)
+{
+    size_t i = 0;
+    size_t cnt = 0;
+
+    if (raw == NULL || out == NULL || n_out == NULL) return ADXL355_ERR_ARG;
+    *n_out = 0;
+    if (PARSE_TBD) return ADXL355_ERR_TBD;
+    /* Align to an X marker; a set needs X, then a Y and a Z entry that are neither X nor empty.
+     * Otherwise the X is a partial set (FIFO overwritten, or the stream ends): drop it, rescan from the next entry. */
+    while (i + 3u <= n_entries && cnt < max) {
+        const uint8_t *e = &raw[i * 3u];
+        if (!entry_is_x(e) || !entry_is_plain(e + 3) || !entry_is_plain(e + 6)) {
+            i++;
+            continue;
+        }
+        out[cnt].x = sample_from_bytes(e);
+        out[cnt].y = sample_from_bytes(e + 3);
+        out[cnt].z = sample_from_bytes(e + 6);
+        cnt++;
+        i += 3u;
+    }
+    *n_out = cnt;
+    return ADXL355_OK;
+}
+
 adxl355_rc_t adxl355_read_fifo(adxl355_t *dev, adxl355_sample_t *out, size_t max, size_t *n_read)
 {
-    uint8_t entries;
-    uint8_t buf[FIFO_MAX_BYTES];
-    size_t nsamp, i;
+    uint8_t entries_reg;
+    uint8_t rx[XFER_MAX];
+    size_t entries, sets, len;
+    uint8_t cmd;
     adxl355_rc_t rc;
 
     if (dev == NULL || out == NULL || n_read == NULL) return ADXL355_ERR_ARG;
@@ -251,27 +301,54 @@ adxl355_rc_t adxl355_read_fifo(adxl355_t *dev, adxl355_sample_t *out, size_t max
     if (FIFO_TBD) return ADXL355_ERR_TBD;
     if (!dev->initialised) return ADXL355_ERR_NOT_INIT;
 
-    /* FIFO_ENTRIES counts 3-byte entries; whole samples = entries / 3 (no-OS C:709-714). */
-    rc = reg_read(dev->bus, (uint8_t)ADXL355_REG_FIFO_ENTRIES, &entries, 1u);
+    /* FIFO_ENTRIES first (no-OS C:664-668); capped at the cited capacity (README.rst:92, 96 entries). */
+    rc = reg_read(dev->bus, (uint8_t)ADXL355_REG_FIFO_ENTRIES, &entries_reg, 1u);
     if (rc != ADXL355_OK) return rc;
-    nsamp = (size_t)(entries / 3u);
-    if (nsamp > max) nsamp = max;
-    if (nsamp * FIFO_SAMPLE_BYTES > sizeof buf) nsamp = sizeof buf / FIFO_SAMPLE_BYTES;
-    if (nsamp == 0) return ADXL355_OK;
+    entries = entries_reg;
+    if (entries > (size_t)ADXL355_FIFO_CAPACITY) entries = (size_t)ADXL355_FIFO_CAPACITY;
+    /* Trigger (design decision (owner t39u)): drain only at or above the watermark. */
+    if (dev->fifo_watermark != 0u && entries < dev->fifo_watermark) return ADXL355_OK;
 
-    /* One burst read of the FIFO port (no-OS C:716-719); an X entry has bit 0 of its third
-     * byte set and an empty entry has bit 1 set (no-OS C:724-725); other groups are skipped. */
-    rc = reg_read(dev->bus, (uint8_t)ADXL355_REG_FIFO_DATA, buf, nsamp * FIFO_SAMPLE_BYTES);
-    if (rc != ADXL355_OK) return rc;
-    for (i = 0; i < nsamp; i++) {
-        const uint8_t *g = &buf[i * FIFO_SAMPLE_BYTES];
-        if ((g[2] & (uint8_t)ADXL355_FIFO_X_MARKER) != 0 && (g[2] & (uint8_t)ADXL355_FIFO_EMPTY) == 0) {
-            out[*n_read].x = sample_from_bytes(&g[0]);
-            out[*n_read].y = sample_from_bytes(&g[3]);
-            out[*n_read].z = sample_from_bytes(&g[6]);
-            (*n_read)++;
-        }
+    /* Whole XYZ sets only: round down to a multiple of 3 entries (no-OS C:714), the tail stays in the FIFO;
+     * never more sets than the caller can store, so nothing drained is lost. */
+    sets = entries / 3u;
+    if (sets > max) sets = max;
+    if (sets == 0u) return ADXL355_OK;
+    entries = sets * 3u;
+
+    /* One CS-low window: 1 leading dummy byte + entries x 3 bytes, TX = FIFO_DATA read byte repeated. */
+    len = 1u + entries * 3u;
+    cmd = (uint8_t)((uint8_t)((uint8_t)ADXL355_REG_FIFO_DATA << ((unsigned)ADXL355_SPI_ADDR_SHIFT & 7u)) |
+                    (uint8_t)ADXL355_SPI_READ_BIT);
+    if (dev->fifo_hal != NULL && dev->fifo_hal->read != NULL) {
+        if (dev->fifo_hal->read(dev->fifo_hal->ctx, cmd, rx, len) != 0) return ADXL355_ERR_BUS;
+    } else {
+        uint8_t tx[XFER_MAX];
+        size_t i;
+        for (i = 0; i < len; i++) tx[i] = cmd;
+        if (dev->bus->transfer(dev->bus->ctx, tx, rx, len) != 0) return ADXL355_ERR_BUS;
     }
+    return adxl355_fifo_parse(&rx[1], entries, out, max, n_read);
+}
+
+adxl355_rc_t adxl355_set_fifo_hal(adxl355_t *dev, const adxl355_fifo_hal_t *hal)
+{
+    if (dev == NULL) return ADXL355_ERR_ARG;
+    dev->fifo_hal = hal;
+    return ADXL355_OK;
+}
+
+/* a function, not a constant expression: with a TBD sentinel the comparison below is gated out but must compile */
+static size_t fifo_samples_max(void) { return (size_t)ADXL355_FIFO_SAMPLES_MAX; }
+
+adxl355_rc_t adxl355_set_fifo_watermark(adxl355_t *dev, uint8_t entries)
+{
+    if (dev == NULL) return ADXL355_ERR_ARG;
+    if (WATERMARK_TBD) return ADXL355_ERR_TBD;
+    if ((size_t)entries > fifo_samples_max()) return ADXL355_ERR_ARG;   /* no-OS C:682 */
+    if (!dev->initialised) return ADXL355_ERR_NOT_INIT;
+    if (reg_write(dev->bus, (uint8_t)ADXL355_REG_FIFO_SAMPLES, entries) != ADXL355_OK) return ADXL355_ERR_BUS;
+    dev->fifo_watermark = entries;
     return ADXL355_OK;
 }
 
@@ -285,6 +362,9 @@ adxl355_rc_t adxl355_status(adxl355_t *dev, uint8_t *status)
     if (!dev->initialised) return ADXL355_ERR_NOT_INIT;
     rc = reg_read(dev->bus, (uint8_t)ADXL355_REG_STATUS, &v, 1u);
     if (rc != ADXL355_OK) return rc;
+    /* FIFO_OVR (no-OS H:222) is counted once per STATUS read that shows it; a STATUS read clears the
+     * overflow interrupt (no-OS README.rst:127). 32 bit, saturating. Design decision (owner t39u). */
+    if ((v & (uint8_t)ADXL355_STATUS_FIFO_OVR) != 0 && dev->fifo_overflows != UINT32_MAX) dev->fifo_overflows++;
     *status = v;
     return ADXL355_OK;
 }

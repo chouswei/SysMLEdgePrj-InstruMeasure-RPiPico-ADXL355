@@ -1,9 +1,12 @@
 //! Link to the Pico over USB CDC serial (model SerialConnection, PICO355-R8).
-//! Port discovery and serial settings: TODO(TBD) (see `tbd.rs`); the user gives the port path.
+//! Serial settings are a design decision (2026-11-19, owner go t37u), see `config::link`:
+//! `SERIAL_BAUD` (ignored by CDC), 8N1, no flow control, read timeout, DTR asserted.
+//! Port discovery stays TODO(TBD) (see `tbd.rs`); the user gives the port path.
 
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
-use crate::tbd;
+use crate::config::link;
 
 /// Byte transport to the firmware; implemented by the serial port and by test doubles.
 pub trait Transport {
@@ -20,7 +23,6 @@ pub enum LinkError {
     Serial(serialport::Error),
     /// Serial settings still TODO(TBD).
     Tbd,
-    NotImplemented,
 }
 
 impl std::fmt::Display for LinkError {
@@ -37,14 +39,17 @@ pub struct SerialTransport {
 }
 
 impl SerialTransport {
-    /// Open the port at `path` (for example /dev/ttyACM0 or COM3).
-    /// Returns `LinkError::Tbd` before touching any port while `tbd::SERIAL_BAUD` is None.
+    /// Open the port at `path` (for example /dev/ttyACM0 or COM5) with the settings in `config::link`:
+    /// 8N1, no flow control, `READ_TIMEOUT_MS` read timeout, DTR asserted.
     pub fn open(path: &str) -> Result<Self, LinkError> {
-        // TODO(TBD) serial settings: baud value comes from tbd.rs; None = not decided.
-        let baud = tbd::SERIAL_BAUD.ok_or(LinkError::Tbd)?;
-        // TODO(TBD) serial settings: no read timeout is set, so a run loop that sees 0-byte
-        // reads can busy-spin; set one here once the serial-settings decision exists.
-        let port = serialport::new(path, baud).open().map_err(LinkError::Serial)?;
+        let mut port = serialport::new(path, link::SERIAL_BAUD)
+            .timeout(Duration::from_millis(link::READ_TIMEOUT_MS))
+            .open()
+            .map_err(LinkError::Serial)?;
+        if link::ASSERT_DTR {
+            // The Pico USB CDC only transmits while the host has DTR set.
+            port.write_data_terminal_ready(true).map_err(LinkError::Serial)?;
+        }
         Ok(Self { port })
     }
 }

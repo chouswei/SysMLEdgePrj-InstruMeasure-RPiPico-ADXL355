@@ -2,8 +2,9 @@
  * protocol.h - USB CDC wire protocol: the ONLY owner of the frame layout.
  *
  * Requirements: PICO355-R5 (sample batches on sampleStream), PICO355-R6 (commands
- * and responses on commandChannel). Every layout choice is a CFG_PROTO_* TODO(TBD)
- * in config.h, mirrored in hmi/src/tbd.rs and described in docs/protocol.md.
+ * and responses on commandChannel). Every layout choice is a CFG_PROTO_* in config.h
+ * (design decision 2026-11-19, owner go t37u), mirrored in hmi/src/config.rs `link`
+ * and described in docs/protocol.md. Frame = header + payload + CRC-16 (little-endian).
  * Model items: SampleBatch, CommandMessage / ConfigCommand, ResponseMessage.
  *
  * TBD rule (docs/protocol.md): each function first checks its arguments
@@ -69,11 +70,22 @@ protocol_rc_t protocol_encode_response(const protocol_response_t *resp,
 protocol_rc_t protocol_encode_command(const protocol_command_t *cmd,
                                       uint8_t *out, size_t out_cap, size_t *out_len);
 
-/** Find and check one frame at the start of in; *consumed = bytes to drop (also on SYNC errors). */
+/** Find and check one frame at the start of in; *consumed = bytes to drop (also on SYNC, CHECKSUM,
+ *  TOO_LONG and TYPE errors: 1 byte, so a receiver rescans; 0 on SHORT: wait for more bytes). */
 protocol_rc_t protocol_decode_frame(const uint8_t *in, size_t in_len,
                                     protocol_frame_t *frame, size_t *consumed);
 
 /** Decode a command payload (frame of type CFG_PROTO_TYPE_COMMAND). */
 protocol_rc_t protocol_decode_command(const uint8_t *payload, size_t len, protocol_command_t *cmd);
+
+/** Decode a response payload (frame of type CFG_PROTO_TYPE_RESPONSE); host side and tests. */
+protocol_rc_t protocol_decode_response(const uint8_t *payload, size_t len, protocol_response_t *resp);
+
+/** Decode a sample-batch payload into out[0..max); *count = samples decoded (host side and tests). */
+protocol_rc_t protocol_decode_sample_batch(const uint8_t *payload, size_t len,
+                                           adxl355_sample_t *out, size_t max, size_t *count);
+
+/** CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection, no final xor) of data[0..len). */
+uint16_t protocol_crc16(const uint8_t *data, size_t len);
 
 #endif /* PICO355_PROTOCOL_H */

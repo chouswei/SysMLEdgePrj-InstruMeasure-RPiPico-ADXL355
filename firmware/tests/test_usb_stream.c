@@ -1,9 +1,6 @@
 /*
- * test_usb_stream.c - host test for firmware/src/usb_stream.c (PICO355-R5, PICO355-R6).
- * Mock hal records written bytes and serves scripted receive bytes.
- * Two builds (CMakeLists.txt): usb_stream (frame format TBD: PROTOCOL_ERR_TBD must come
- * back as USB_STREAM_ERR_TBD, nothing written, nothing popped) and usb_stream_inject
- * (-D test data for CFG_PROTO_* and a larger buffer depth: mechanics only).
+ * test_usb_stream.c - host test for firmware/src/usb_stream.c on the REAL config.h frame layout
+ * (PICO355-R5, PICO355-R6). Mock hal records written bytes and serves scripted receive bytes.
  */
 #include <stdio.h>
 #include <string.h>
@@ -13,36 +10,8 @@
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
 
-#define ANY_TBD (CFG_IS_TBD(CFG_PROTO_SYNC) || CFG_IS_TBD(CFG_PROTO_HEADER_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_FIELD_BYTES) || CFG_IS_TBD(CFG_PROTO_CHECKSUM_KIND) || \
-                 CFG_IS_TBD(CFG_PROTO_MAX_PAYLOAD) || CFG_IS_TBD(CFG_PROTO_TYPE_SAMPLE_BATCH) || \
-                 CFG_IS_TBD(CFG_PROTO_TYPE_COMMAND) || CFG_IS_TBD(CFG_PROTO_TYPE_RESPONSE) || \
-                 CFG_IS_TBD(CFG_PROTO_SYNC_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_TYPE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_LENGTH_MSB_FIRST) || \
-                 CFG_IS_TBD(CFG_PROTO_PAD_BYTE) || \
-                 CFG_IS_TBD(CFG_PROTO_CHECKSUM_NONE) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_PAYLOAD_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_CMD_VALUE_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_PAYLOAD_LEN) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_CMD_CODE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_OFFSET) || \
-                 CFG_IS_TBD(CFG_PROTO_RESP_VALUE_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_VALUE_MSB_FIRST) || \
-                 CFG_IS_TBD(CFG_PROTO_SAMPLE_AXIS_BYTES) || \
-                 CFG_IS_TBD(CFG_PROTO_SAMPLE_MSB_FIRST))
 
-#ifdef PF_REQUIRE_INJECT
-#if ANY_TBD
-#error "usb_stream_inject target must define every frame CFG_PROTO_* as test data"
-#endif
-#endif
-
-static uint8_t g_written[512];
+static uint8_t g_written[1024];
 static size_t g_written_len;
 static int g_write_calls;
 static size_t g_short_by;            /* hal reports this many fewer bytes than asked */
@@ -118,29 +87,6 @@ static void receive_passthrough(void)
     CHECK(n == sizeof data && memcmp(rx, data, sizeof data) == 0);
 }
 
-#if ANY_TBD
-/* TBD rule: USB_STREAM_ERR_TBD, nothing written, no sample popped, *sent = 0. */
-static void tbd_state(void)
-{
-    usb_stream_t us;
-    uint8_t frame[64];
-    sample_buffer_t buf;
-    adxl355_sample_t s = {1, 2, 3};
-    protocol_response_t resp = {1, 2, 3};
-    size_t sent = 5;
-
-    reset_mock();
-    CHECK(usb_stream_init(&us, &g_hal, frame, sizeof frame) == USB_STREAM_OK);
-    CHECK(sample_buffer_init(&buf) == SAMPLE_BUFFER_OK);
-    CHECK(sample_buffer_push(&buf, &s) == SAMPLE_BUFFER_OK);
-    CHECK(usb_stream_send_batch(&us, &buf, 1, &sent) == USB_STREAM_ERR_TBD);
-    CHECK(sent == 0);
-    CHECK(sample_buffer_count(&buf) == 1);
-    CHECK(g_write_calls == 0);
-    CHECK(usb_stream_send_response(&us, &resp) == USB_STREAM_ERR_TBD);
-    CHECK(g_write_calls == 0);
-}
-#else
 static void mechanics(void)
 {
     usb_stream_t us;
@@ -182,17 +128,39 @@ static void mechanics(void)
     CHECK(usb_stream_send_response(&us_tiny, &resp) == USB_STREAM_ERR_ENCODE);
     CHECK(g_write_calls == 0);
 }
-#endif
+
+/* a full buffer of CFG_SAMPLE_BUFFER_DEPTH samples leaves as ONE frame, at the golden bytes for 2 samples */
+static void depth_batch_and_golden(void)
+{
+    usb_stream_t us;
+    uint8_t frame[CFG_USB_FRAME_BUF_BYTES];
+    sample_buffer_t buf;
+    adxl355_sample_t a = {1, -2, 3}, b = {-524288, 524287, 0};
+    protocol_response_t ack = {(uint8_t)CFG_PROTO_RESP_ACK, (uint8_t)CFG_PROTO_CMD_SET_ODR, 0u};
+    protocol_frame_t f;
+    size_t sent = 0, used = 0, i;
+    static const uint8_t g_ack[] = {0xa5,0x03,0x06,0x00,0x01,0x01,0x00,0x00,0x00,0x00,0x0e,0xbc};
+
+    reset_mock();
+    CHECK(usb_stream_init(&us, &g_hal, frame, sizeof frame) == USB_STREAM_OK);
+    CHECK(sample_buffer_init(&buf) == SAMPLE_BUFFER_OK);
+    for (i = 0; i < CFG_SAMPLE_BUFFER_DEPTH; i++) CHECK(sample_buffer_push(&buf, (i % 2) ? &b : &a) == SAMPLE_BUFFER_OK);
+    CHECK(usb_stream_send_batch(&us, &buf, CFG_SAMPLE_BUFFER_DEPTH, &sent) == USB_STREAM_OK);
+    CHECK(sent == CFG_SAMPLE_BUFFER_DEPTH && g_write_calls == 1);
+    CHECK(protocol_decode_frame(g_written, g_written_len, &f, &used) == PROTOCOL_OK);
+    CHECK(used == g_written_len && f.payload_len == CFG_SAMPLE_BUFFER_DEPTH * 9u);
+
+    reset_mock();
+    CHECK(usb_stream_send_response(&us, &ack) == USB_STREAM_OK);
+    CHECK(g_written_len == sizeof g_ack && memcmp(g_written, g_ack, sizeof g_ack) == 0);
+}
 
 int main(void)
 {
     args();
     receive_passthrough();
-#if ANY_TBD
-    tbd_state();
-#else
     mechanics();
-#endif
+    depth_batch_and_golden();
     if (g_fail) { printf("test_usb_stream: %d check(s) failed\n", g_fail); return 1; }
     printf("test_usb_stream: ok\n");
     return 0;

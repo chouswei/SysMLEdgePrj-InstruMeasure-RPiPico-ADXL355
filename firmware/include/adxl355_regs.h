@@ -51,7 +51,7 @@
 #define ADXL355_FIFO_X_MARKER 0x01 /* no-OS C:724 third byte of an X entry has bit 0 set */
 #define ADXL355_FIFO_EMPTY 0x02 /* no-OS C:725 third byte bit 1 set means empty entry, skipped */
 #define ADXL355_FIFO_SAMPLES_MAX 0x60 /* no-OS H:57 ADXL355_MAX_FIFO_SAMPLES_VAL, the largest FIFO_SAMPLES watermark value (C:682); bounds CFG_FIFO_WATERMARK */
-#define ADXL355_FIFO_CAPACITY ADXL355_FIELD_TBD /* TODO(TBD) FIFO size in entries: no-OS gives only the watermark maximum above, not a capacity */
+#define ADXL355_FIFO_CAPACITY 96 /* FIFO size in entries (3 entries = 1 XYZ set, so 32 sets): no-OS pin 4557b1f58f8a233bd116dbb02d8d5c447d3699b6 drivers/accel/adxl355/README.rst:92 "There are 96 locations in the FIFO" (README.rst:96 default and maximum FIFO samples value 96, :127 overflow past this limit); equals ADXL355_FIFO_SAMPLES_MAX */
 
 /* ---- Configuration ---- */
 #define ADXL355_REG_FILTER 0x28 /* no-OS H:47 ADXL355_FILTER address (ODR/LPF and high-pass corner) */
@@ -65,7 +65,7 @@
 #define ADXL355_ODR_CODE_500HZ 3 /* no-OS H:159 ADXL355_ODR_500HZ */
 #define ADXL355_ODR_CODE_250HZ 4 /* no-OS H:160 ADXL355_ODR_250HZ */
 #define ADXL355_ODR_CODE_125HZ 5 /* no-OS H:161 ADXL355_ODR_125HZ (lower ODRs H:162-166 are fractional Hz, not used) */
-#define ADXL355_REG_FIFO_SAMPLES 0x29 /* no-OS H:48 ADXL355_FIFO_SAMPLES address (FIFO watermark register); the driver does not write it while CFG_FIFO_WATERMARK is TBD */
+#define ADXL355_REG_FIFO_SAMPLES 0x29 /* no-OS H:48 ADXL355_FIFO_SAMPLES address (FIFO watermark register), written by adxl355_set_fifo_watermark (no-OS C:678-692, value above ADXL355_FIFO_SAMPLES_MAX refused at C:682) */
 #define ADXL355_REG_RANGE 0x2C /* no-OS H:51 ADXL355_RANGE address */
 #define ADXL355_RANGE_MASK 0x03 /* no-OS H:118 RANGE_FIELD_MSK = GENMASK(1,0) */
 #define ADXL355_RANGE_CODE_2G 1 /* no-OS H:170 ADXL355_RANGE_2G */
@@ -86,7 +86,7 @@
 
 /* ADXL355_REGS_ARE_TBD: 1 while at least one entry the driver uses is TBD, 0 once
  * every entry the driver uses is cited. Computed from the entries so it cannot
- * drift. ADXL355_FIFO_CAPACITY and ADXL355_REG_FIFO_SAMPLES are not used by the driver.
+ * drift. ADXL355_FIFO_CAPACITY (a cited size, not a register) is used by the drain as a bound only.
  * TODO(TBD) flag: stays 1 while any used entry is TBD. */
 #define ADXL355_REGS_ARE_TBD ( \
     ADXL355_IS_TBD(ADXL355_REG_DEVID_AD) || ADXL355_IS_TBD(ADXL355_REG_DEVID_MST) || \

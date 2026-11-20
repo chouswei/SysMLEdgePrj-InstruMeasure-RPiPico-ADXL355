@@ -28,7 +28,8 @@ static int mock_transfer(void *ctx, const uint8_t *tx, uint8_t *rx, size_t len)
     g_calls++;
     return 0;
 }
-static const adxl355_bus_t g_bus = { mock_transfer, NULL };
+static void mock_delay(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
+static const adxl355_bus_t g_bus = { mock_transfer, NULL, mock_delay };
 
 static adxl355_config_t good_cfg(void)
 {
@@ -42,7 +43,7 @@ static adxl355_config_t good_cfg(void)
 static void arg_cases(void)
 {
     adxl355_t dev;
-    adxl355_bus_t nobus = { NULL, NULL };
+    adxl355_bus_t nobus = { NULL, NULL, mock_delay };
     adxl355_config_t c = good_cfg();
     adxl355_sample_t smp = {0, 0, 0};
     adxl355_sample_t arr[2];
