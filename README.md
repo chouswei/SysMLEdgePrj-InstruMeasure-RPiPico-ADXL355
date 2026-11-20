@@ -34,15 +34,35 @@ The output is `pico355_fw.uf2` (CMake target `pico355_fw`, see `firmware/CMakeLi
 
 ### Running the HMI (PC, Rust)
 
-The PC HMI is in `hmi/` and talks to the Pico over USB CDC. Port discovery is TODO(TBD), so pass the port path yourself:
+The PC HMI is in `hmi/` (binary `pico355-hmi`) and talks to the Pico over USB CDC. The settings for the port are in `hmi/src/config.rs` `link` (8N1, DTR asserted).
+
+Default: a native desktop window (eframe with egui_plot; `hmi/src/gui.rs`):
 
 ```sh
-cargo run --manifest-path hmi/Cargo.toml -- --port <path> [--odr <hz>]
+cargo run --manifest-path hmi/Cargo.toml -- [--port <path>]
 ```
 
-`--help` prints the usage. `--odr` is optional; the default comes from `CFG_DEFAULT_ODR_HZ` (4000 Hz, PICO355-R1).
+`--port <path>` preselects the port. The window has:
 
-The HMI opens the port (settings in `hmi/src/config.rs` `link`: 8N1, DTR asserted), sends set-ODR, and prints one `x y z` raw-count line per decoded sample, plus `response: ...` for the firmware's ACK. Log output is still TODO(TBD): the first batch prints one `logging stopped` line on stderr.
+- Stacked live X, Y and Z charts. The vertical axis is in g, labelled `X (g)`, `Y (g)` and `Z (g)`. Each value is computed from the 20-bit signed raw counts with the no-OS sensitivity for the active range: 3.9e-6 g per LSB at 2 g, multiplied by 2 at 4 g and by 4 at 8 g (`hmi/src/scale.rs`; cited to `adxl355.h:62-65` and `adxl355.c:920-930` of the no-OS pin `4557b1f58f8a233bd116dbb02d8d5c447d3699b6`). The LSB-per-g value is a derived reciprocal.
+- A COM port dropdown with refresh, and a custom path field. The Pico (USB VID 2E8A, PID 000A) is highlighted.
+- Controls for ODR (4000, 2000, 1000, 500, 250 and 125 Hz), range (2, 4 and 8 g) and high-pass (codes 0 to 6), each with an explicit Apply. The last ACK or ERR from the firmware is shown.
+- Status: measured rate, sample count and FIFO overflow count, from `CMD_GET_STATUS` polled about once per second (and on manual refresh).
+- Start / Stop HDF5 logging. The log is a `.h5` file named `pico355_YYYYMMDD_HHMMSS.h5` (UTC time), written from a background thread with the pure-Rust `hdf5-pure` library. It is readable with h5py. Its groups are `accel_g` (`x_g`, `y_g`, `z_g`), `raw_counts` (`x`, `y`, `z`) and `sample_index`; the scale, range, ODR, high-pass code, overflow count and start time are root attributes (`hmi/src/h5log.rs`).
+
+Headless stream (no window), the earlier text flow kept unchanged:
+
+```sh
+cargo run --manifest-path hmi/Cargo.toml -- --cli --port <path> [--odr <hz>]
+```
+
+It opens the port, sends set-ODR, prints one `x y z` raw-count line per decoded sample and `response: ...` for the firmware's ACK. `--odr` applies only with `--cli`; the default comes from `CFG_DEFAULT_ODR_HZ` (4000 Hz, PICO355-R1). `--cli` without `--port` is a usage error.
+
+`--help` prints the usage.
+
+Not yet run: the native window on a real GPU/OpenGL driver, and the Windows and hardware runs. Those are the owner's and stay unverified here.
+
+Design decisions (owner t43s2): window layout, refresh and poll intervals, and the port dropdown. Still TBD: a native file picker (the log path is an editable text field), log rotation, and a real-hardware GPU/OpenGL check.
 
 ### Check scripts
 
@@ -82,5 +102,5 @@ Requirements are the `PICO355-R` tags in the model files. The files below are th
 | PICO355-R5 buffer and stream | `firmware/include/sample_buffer.h`, `firmware/src/sample_buffer.c`, `firmware/include/usb_stream.h`, `firmware/src/usb_stream.c`, `firmware/include/protocol.h`, `firmware/src/protocol.c` |
 | PICO355-R6 command handling | `firmware/include/command.h`, `firmware/src/command.c`, `firmware/include/protocol.h`, `firmware/src/protocol.c`, `hmi/src/protocol.rs` |
 | PICO355-R7 state machine | `firmware/include/fsm.h`, `firmware/src/fsm.c`, `firmware/include/config.h` |
-| PICO355-R8 HMI serial + config UI | `hmi/src/link.rs`, `hmi/src/config.rs`, `hmi/src/main.rs` |
-| PICO355-R9 HMI live view + logging | `hmi/src/live_view.rs`, `hmi/src/logger.rs`, `hmi/src/main.rs` |
+| PICO355-R8 HMI serial + config UI | `hmi/src/link.rs`, `hmi/src/config.rs`, `hmi/src/worker.rs`, `hmi/src/main.rs` |
+| PICO355-R9 HMI live view + logging | `hmi/src/live_view.rs`, `hmi/src/logger.rs`, `hmi/src/gui.rs`, `hmi/src/h5log.rs`, `hmi/src/main.rs` |
