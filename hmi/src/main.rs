@@ -1,30 +1,40 @@
 //! pico355-hmi binary: argument parsing and wiring (PICO355-R8, PICO355-R9).
-//! HMI form TODO(TBD): placeholder is a plain terminal text view: one "x y z" raw-count line per sample.
-//! Usage: pico355-hmi --port COM5
-//! Log destination and format TODO(TBD): no log flag in the CLI contract yet, so samples go to a sink.
+//! Default: the native window (`gui::run`); `--port X` preselects a port there.
+//! `--cli --port X`: the headless flow, unchanged: plain terminal text view, one "x y z"
+//! raw-count line per sample.
+//! Usage: pico355-hmi [--port COM5] | pico355-hmi --cli --port COM5 [--odr 4000]
+//! CLI log destination and format TODO(TBD): no log flag in the CLI contract, so CLI samples go to
+//! a sink (the window logs HDF5).
 
 use std::io::{self, Write};
 use std::process::ExitCode;
 
 use pico355_hmi::config::{link as wire, HmiConfig};
+use pico355_hmi::gui;
 use pico355_hmi::link::{SerialTransport, Transport};
 use pico355_hmi::logger::Logger;
 use pico355_hmi::live_view;
 use pico355_hmi::protocol::{decode_frame, encode_command, Command, Frame};
 
-const USAGE: &str = "usage: pico355-hmi [--port <path>] [--odr <hz>] [--help]";
+const USAGE: &str = "usage: pico355-hmi [--port <path>]                    (default: native window)\n       pico355-hmi --cli --port <path> [--odr <hz>]  (headless stream)\n       pico355-hmi --help";
 
 /// Local read chunk size for the serial transport (an implementation buffer, not a protocol value).
 const READ_CHUNK: usize = 4096;
 
 fn main() -> ExitCode {
-    let cfg = match parse_args(std::env::args().skip(1)) {
-        Ok(Some(cfg)) => cfg,
+    let (cfg, cli) = match parse_args(std::env::args().skip(1)) {
+        Ok(Some(parsed)) => parsed,
         Ok(None) => return ExitCode::SUCCESS,
         Err(code) => return code,
     };
+    if !cli {
+        return match gui::run(cfg.port) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(msg) => fail(&msg),
+        };
+    }
     let Some(port) = cfg.port.clone() else {
-        return usage_error("--port is required (port discovery TODO(TBD))");
+        return usage_error("--cli needs --port <path>");
     };
     let mut link = match SerialTransport::open(&port) {
         Ok(link) => link,
@@ -39,9 +49,12 @@ fn main() -> ExitCode {
     }
 }
 
-/// Parse the arguments. `Ok(None)` = help was printed; `Err` = exit code to return.
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<HmiConfig>, ExitCode> {
+/// Parse the arguments into (settings, `--cli` given). `Ok(None)` = help was printed;
+/// `Err` = exit code to return. `--odr` applies to the headless flow only.
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<(HmiConfig, bool)>, ExitCode> {
     let mut cfg = HmiConfig::default();
+    let mut cli = false;
+    let mut odr_given = false;
     let mut args = args;
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -49,18 +62,25 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Option<HmiConfig>, E
                 println!("{USAGE}");
                 return Ok(None);
             }
+            "--cli" => cli = true,
             "--port" => match args.next() {
                 Some(p) => cfg.port = Some(p),
                 None => return Err(usage_error("--port needs a value")),
             },
             "--odr" => match args.next().and_then(|v| v.parse().ok()) {
-                Some(hz) => cfg.odr_hz = hz,
+                Some(hz) => {
+                    cfg.odr_hz = hz;
+                    odr_given = true;
+                }
                 None => return Err(usage_error("--odr needs a number")),
             },
             other => return Err(usage_error(&format!("unknown argument: {other}"))),
         }
     }
-    Ok(Some(cfg))
+    if odr_given && !cli {
+        return Err(usage_error("--odr applies to --cli only (the window has an ODR control)"));
+    }
+    Ok(Some((cfg, cli)))
 }
 
 /// Open-link flow: apply settings, then feed received sample batches to the live view and the logger.
