@@ -18,7 +18,10 @@
 //!   every such batch after the oldest one / (newest arrival - oldest arrival). `None` with
 //!   fewer than 2 batches or zero elapsed time.
 
+use std::collections::VecDeque;
+
 use crate::protocol::Sample;
+use crate::scale::sample_to_g;
 
 /// Ring capacity: DERIVED 10 s chart window x 4000 Hz default ODR = 40 000 samples.
 pub const DEFAULT_CAPACITY: usize = 40_000;
@@ -56,26 +59,48 @@ pub struct Stats {
 #[derive(Debug, Clone)]
 pub struct SampleStore {
     capacity: usize,
+    samples: VecDeque<TimedSample>,
+    pushed: u64,
+    /// Accepted batches as (host arrival s, sample count), oldest first, trimmed to the rate window.
+    batches: VecDeque<(f64, usize)>,
 }
 
 impl SampleStore {
     /// Empty store holding at most `capacity` samples.
     pub fn new(capacity: usize) -> SampleStore {
-        let _ = capacity;
-        todo!()
+        SampleStore { capacity, samples: VecDeque::new(), pushed: 0, batches: VecDeque::new() }
     }
 
     /// Push one decoded batch scaled with `range_code` (see `scale`) at `odr_hz`; `now_s` is the
     /// host arrival time in seconds. Returns the accepted count; 0 (nothing stored) for an
     /// invalid range code or `odr_hz == 0`.
     pub fn push_batch(&mut self, batch: &[Sample], range_code: u8, odr_hz: u32, now_s: f64) -> usize {
-        let _ = (batch, range_code, odr_hz, now_s);
-        todo!()
+        if odr_hz == 0 || batch.is_empty() || crate::scale::g_per_lsb(range_code).is_none() {
+            return 0;
+        }
+        let odr = odr_hz as f64;
+        for raw in batch {
+            let g = match sample_to_g(raw, range_code) {
+                Some(g) => g,
+                None => unreachable!("range code checked above"),
+            };
+            let index = self.pushed;
+            self.samples.push_back(TimedSample { index, t_s: index as f64 / odr, raw: *raw, g });
+            while self.samples.len() > self.capacity {
+                self.samples.pop_front();
+            }
+            self.pushed += 1;
+        }
+        self.batches.push_back((now_s, batch.len()));
+        while matches!(self.batches.front(), Some(&(t, _)) if t < now_s - RATE_WINDOW_S) {
+            self.batches.pop_front();
+        }
+        batch.len()
     }
 
     /// Samples currently stored.
     pub fn len(&self) -> usize {
-        todo!()
+        self.samples.len()
     }
 
     /// True when no sample is stored.
@@ -90,34 +115,88 @@ impl SampleStore {
 
     /// Samples accepted since the last `clear` (including dropped ones).
     pub fn total_pushed(&self) -> u64 {
-        todo!()
+        self.pushed
     }
 
     /// Drop all samples and batch history; the index restarts at 0.
     pub fn clear(&mut self) {
-        todo!()
+        self.samples.clear();
+        self.pushed = 0;
+        self.batches.clear();
     }
 
     /// Samples with `t_s > last t_s - secs`, oldest first.
     pub fn window(&self, secs: f64) -> Vec<TimedSample> {
-        let _ = secs;
-        todo!()
+        let last = match self.samples.back() {
+            Some(s) => s.t_s,
+            None => return Vec::new(),
+        };
+        let limit = last - secs;
+        let mut out: Vec<TimedSample> =
+            self.samples.iter().rev().take_while(|s| s.t_s > limit).copied().collect();
+        out.reverse();
+        out
     }
 
     /// Min/max envelope of one axis over `window(secs)` (see module doc).
     pub fn envelope(&self, secs: f64, buckets: usize, axis: usize) -> Vec<EnvPoint> {
-        let _ = (secs, buckets, axis);
-        todo!()
+        if buckets == 0 || axis > 2 {
+            return Vec::new();
+        }
+        let window = self.window(secs);
+        if window.is_empty() {
+            return Vec::new();
+        }
+        let chunk = window.len().div_ceil(buckets);
+        window
+            .chunks(chunk)
+            .map(|c| {
+                let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+                for s in c {
+                    lo = lo.min(s.g[axis]);
+                    hi = hi.max(s.g[axis]);
+                }
+                EnvPoint { t_s: c[0].t_s, min_g: lo, max_g: hi }
+            })
+            .collect()
     }
 
     /// Statistics over `window(secs)`; `None` when empty.
     pub fn stats(&self, secs: f64) -> Option<Stats> {
-        let _ = secs;
-        todo!()
+        let window = self.window(secs);
+        let last = window.last()?;
+        let n = window.len();
+        let mut sum = [0.0f64; 3];
+        let mut sq = [0.0f64; 3];
+        for s in &window {
+            for a in 0..3 {
+                sum[a] += s.g[a];
+                sq[a] += s.g[a] * s.g[a];
+            }
+        }
+        let nf = n as f64;
+        Some(Stats {
+            n,
+            last_g: last.g,
+            mean_g: [sum[0] / nf, sum[1] / nf, sum[2] / nf],
+            rms_g: [(sq[0] / nf).sqrt(), (sq[1] / nf).sqrt(), (sq[2] / nf).sqrt()],
+        })
     }
 
     /// Measured sample rate in Hz from host arrival times (see module doc).
     pub fn measured_rate_hz(&self) -> Option<f64> {
-        todo!()
+        let newest = self.batches.back()?.0;
+        let in_window: Vec<&(f64, usize)> =
+            self.batches.iter().filter(|(t, _)| *t >= newest - RATE_WINDOW_S).collect();
+        if in_window.len() < 2 {
+            return None;
+        }
+        let (oldest_t, _) = *in_window[0];
+        let elapsed = newest - oldest_t;
+        if elapsed <= 0.0 {
+            return None;
+        }
+        let counted: usize = in_window[1..].iter().map(|(_, n)| *n).sum();
+        Some(counted as f64 / elapsed)
     }
 }
