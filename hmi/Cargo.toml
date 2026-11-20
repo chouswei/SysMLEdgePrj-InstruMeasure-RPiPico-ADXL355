@@ -17,3 +17,9 @@ path = "src/main.rs"
 # default-features = false: no libudev port enumeration (libudev headers are not
 # available on the build box); the user gives the port path.
 serialport = { version = "4", default-features = false }
+# Native window (PICO355-R8, PICO355-R9): eframe/egui with the glow (OpenGL) backend only;
+# versions and features checked by a preflight build (Linux, Windows GNU cross).
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11"] }
+egui_plot = "0.38"
+# HDF5 writer in pure Rust (no C library, no build script); rank-1 appends only.
+hdf5-pure = "0.48"
