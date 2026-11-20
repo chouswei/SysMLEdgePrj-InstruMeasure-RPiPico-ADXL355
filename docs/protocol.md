@@ -274,8 +274,8 @@ Frame = header (sync, type, length u16 LE) + payload + CRC-16/CCITT-FALSE (u16 L
 | `CFG_PROTO_CMD_GET_STATUS` | `CMD_GET_STATUS` | get status (design decision (owner t39u)) | 0x04 | ignored (send 0); no configuration change, no state change, streaming continues |
 
 The HMI sends `CMD_SET_ODR` (default 4000 Hz, `--odr <hz>`) after opening the port; the firmware answers with an
-ACK frame, which the HMI prints as `response: ...`. Range and filter commands exist in the set but have no HMI
-flag yet.
+ACK frame, which the HMI prints as `response: ...`. Range and filter commands exist in the set; the `--cli`
+path has no flag for them, and the window has controls for both.
 
 Rust mirror rule: every `CFG_PROTO_*` macro in `firmware/include/config.h` has a `pub const` of the same name without
 `CFG_PROTO_` in `hmi/src/config.rs` module `link`, with the same numeric value (checked by `hmi/tests/link_config.rs`).
@@ -330,9 +330,13 @@ Requirements PICO355-R8 and PICO355-R9 (HMI). Design decisions are labelled `(ow
   range the device ACKed, not the range the user selected; a range that was never ACKed does not change the scale.
 - ODR, range and the high-pass Apply control are locked while logging, so the file attributes stay true (design
   decision (owner t43s2)). Port selection is not locked by logging.
-- The last ACK or ERR is shown next to the control that sent it. Status (FIFO overflow count, measured rate,
-  sample count) comes from `CMD_GET_STATUS` (~1 Hz) and manual refresh; the measured rate and sample count are
-  host-side values.
+- The window shows one `last:` line for the most recent ACK or ERR, whichever control sent it.
+  Status (FIFO overflow count, measured rate, sample count) comes from `CMD_GET_STATUS` (~1 Hz) and manual
+  refresh; the measured rate and sample count are host-side values.
+- The firmware ACK carries value 0 (`firmware/src/command.c:142`), so the HMI applies the setting it sent: each
+  sent ODR, range or filter value is kept per command code and taken oldest-first on ACK; a NACK drops it.
+  `Ack.value` is never used as the applied setting.
+- Pause (checkbox) stops feeding the live charts. Logging continues while paused; the file gets every sample.
 
 ### Scale to g (cited)
 
