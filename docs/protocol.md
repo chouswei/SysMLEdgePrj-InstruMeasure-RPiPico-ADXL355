@@ -107,8 +107,8 @@ The datasheet (analog.com) could not be fetched, so no value here is cited to it
 
 Settled by the FIFO drain job (owner t39u, see "FIFO drain"): FIFO capacity 96 (cited), watermark, trigger, overflow count and status response.
 
-Stay TBD on purpose (not needed to stream): log format, HMI form beyond the plain text live view
-(`pico355-hmi` prints one `x y z` raw-count line per sample), LDO output check, cable pinout, CI pins,
+Stay TBD on purpose (not needed to stream): LDO output check, cable pinout, CI pins,
+(HMI form, log format, port discovery and refresh rate were settled later by the GUI job; see "HMI GUI and HDF5 log". The `--cli --port` text stream still prints one `x y z` raw-count line per sample.)
 default filter (the high-pass is left at the sensor value), buffer overflow policy (newest sample dropped and
 counted, a stream-error fault is not raised for it), HMI range/filter defaults and flags.
 
@@ -298,6 +298,99 @@ The same literal bytes are in `firmware/tests/test_protocol.c` and `hmi/tests/go
 Proof level: host encode/decode round trip on both sides. No Pico was attached; flashing and `pico355-hmi --port COM5`
 on Windows are the owner's step and have not been run.
 
+## HMI GUI and HDF5 log
+
+Requirements PICO355-R8 and PICO355-R9 (HMI). Design decisions are labelled `(owner t43s2)`; the scale is cited
+(see below). The GUI is the default `pico355-hmi` mode; `--cli --port <path>` keeps the headless text stream.
+
+### GUI form
+
+- Native window, eframe 0.37 with the glow backend (OpenGL), charts with egui_plot 0.38. Default mode: `pico355-hmi`
+  opens the window; `--port <path>` preselects the port in the list.
+- `pico355-hmi --cli --port <path>`: headless stream, same flow as before (no window). `--cli` without `--port` is a
+  usage error.
+- Live refresh: repaint every 25 ms (`REPAINT_INTERVAL_MS`) and a `CMD_GET_STATUS` poll every 1 s
+  (`POLL_INTERVAL_MS`) (both design decisions (owner t43s2)).
+- Chart windows 2 / 5 / 10 s (`WINDOW_CHOICES_S`) (design decision (owner t43s2)).
+- Three stacked charts, one per axis, with vertical axis labels `X (g)`, `Y (g)`, `Z (g)` (`axis_label`). Charts never
+  show raw counts; the envelope values used for plotting are g (`SampleStore::envelope`, `min_g` / `max_g`).
+
+### Port discovery
+
+- The list comes from serialport `available_ports()` (`worker::list_ports`). A Pico is flagged by USB VID `0x2E8A`
+  and PID `0x000A` (`PICO_VID`, `PICO_PID`), as stated in the owner's ask (design decision (owner t43s2)).
+- A custom path may be typed in addition to the list. Refresh rescans the list.
+- Native file picker: not taken; the log path is an editable text field. **TBD** (native file picker).
+
+### Connect and controls
+
+- Connect opens the port with the `link` settings (8N1, no flow control, DTR asserted, read timeout 100 ms). No
+  filter write happens on connect (design decision (owner t43s2)).
+- On connect the GUI sends the chosen range (`CMD_SET_RANGE`) and ODR (`CMD_SET_ODR`). The g scale follows the
+  range the device ACKed, not the range the user selected; a range that was never ACKed does not change the scale.
+- ODR, range and the high-pass Apply control are locked while logging, so the file attributes stay true (design
+  decision (owner t43s2)). Port selection is not locked by logging.
+- The last ACK or ERR is shown next to the control that sent it. Status (FIFO overflow count, measured rate,
+  sample count) comes from `CMD_GET_STATUS` (~1 Hz) and manual refresh; the measured rate and sample count are
+  host-side values.
+
+### Scale to g (cited)
+
+- g per LSB = `3.9e-6 x {1, 2, 4}` for range code `{1, 2, 3}` (2 g, 4 g, 8 g): `3.9e-6`, `7.8e-6`, `15.6e-6` g/LSB.
+  Cited: no-OS commit `4557b1f58f8a233bd116dbb02d8d5c447d3699b6`, `drivers/accel/adxl355/adxl355.h:62-65`
+  (3.9 ug/LSB at 2 g, multiplier 2 for 4 g and 4 for 8 g), `:169-174` (range enum 1 / 2 / 3), `adxl355.c:18`
+  (scale multiplier table {0, 1, 2, 4}), `adxl355.c:920-930` (20-bit sign extension, then the scale).
+- `scale_lsb_per_g` (LSB per g) is the reciprocal of g per LSB: DERIVED (1 / 3.9e-6 = 256410.26...), not a datasheet
+  or no-OS value. Any other scale value stays TBD.
+- Code: `scale::G_PER_LSB_2G`, `g_per_lsb`, `lsb_per_g` (derived), `raw_to_g`, `sample_to_g`. An unknown range code
+  returns `None`.
+
+### Threading
+
+- Reader thread: owns the serial port; reads frames, decodes samples and ACK / ERR / status responses.
+- Command channel: GUI to worker (`WorkerCommand`). Event channel: worker to GUI (`WorkerEvent`, drained each frame).
+- Writer thread: owned by `h5log::H5Logger`; it receives the samples and the settings from the GUI, writes in
+  chunks, and is joined on stop. The GUI never blocks on the file.
+
+### HDF5 schema (`h5log`)
+
+The file is written with hdf5-pure 0.48 (pure Rust, no C library). h5py reads it.
+
+| Object | Type and shape | Meaning |
+|---|---|---|
+| `accel_g/x_g`, `accel_g/y_g`, `accel_g/z_g` | f64, rank 1, unlimited (maxshape), chunk 4096 | acceleration in g |
+| `raw_counts/x`, `raw_counts/y`, `raw_counts/z` | i32, rank 1, unlimited, chunk 4096 | 20-bit signed raw counts (sign extended) |
+| `sample_index` | u64, rank 1, unlimited, chunk 4096 | push index of each sample |
+
+Root attributes: `odr_hz` (Hz), `range_g` (2, 4, 8), `scale_g_per_lsb` (cited), `scale_lsb_per_g` (DERIVED),
+`hpf_code` (i32, -1 = high-pass not applied by this HMI), `fifo_overflow_count` (last status), `units` = `g`,
+`sensor` = `ADXL355`, `started_utc` (`YYYY-MM-DDTHH:MM:SSZ`).
+
+- Why one 1-D dataset per axis: hdf5-pure appends only work on rank-1 datasets (PREFLIGHT.md section 3), so a 2-D
+  `N x 3` array is not used.
+- Default file name: `pico355_YYYYMMDD_HHMMSS.h5` in UTC (`default_log_filename`) (design decision (owner t43s2)).
+- Verification: `hmi/tests/h5log.rs` writes a file and, when the venv python exists, runs `tools/checks/h5verify.py`
+  (h5py). Path of the venv used for the check is recorded in the run's done row.
+
+### Build and imports
+
+- Windows build: `export PATH=/home/box/toolchains/venv/bin:$PATH; cd hmi && CARGO_TARGET_DIR=<dir> cargo zigbuild --release --target x86_64-pc-windows-gnu`.
+- Expected imports: Windows system DLLs only (no libstdc++, libgcc, libwinpthread, GTK or WebView2). Checked with
+  `objdump -p <exe> | grep 'DLL Name'`. The list from the preflight (advapi32, the api-ms-win-core and UCRT
+  api-ms-win-crt sets, bcryptprimitives, cfgmgr32, dwmapi, gdi32, imm32, kernel32, ntdll, ole32, opengl32, setupapi,
+  shell32, user32, userenv, uxtheme, ws2_32) is the expectation, not the final build; the exe sha256 is recorded by the
+  combine step, not here.
+- The glow backend needs an OpenGL 2+ driver on the PC. `opengl32.dll` is a system DLL; a real GPU driver run is not
+  verified here. **TBD** (real GPU / OpenGL driver check on the PC).
+
+### TBD in this section
+
+- Native file picker (editable path only) - **TBD**.
+- Log rotation - **TBD**.
+- LSB per g beyond the derived reciprocal - **TBD** (no other source).
+- `hmi/src/tbd.rs` is NOT edited by this section: it keeps the old terminal placeholders (`HMI_FORM`, `LOG_FORMAT`,
+  `PORT_DISCOVERY`, `LIVE_VIEW_REFRESH_HZ`) for the `--cli` path.
+
 ## Open TBD list
 
 Settled by the end-to-end link job (see "Settled link values"): SPI clock and mode, post-reset delay, USB frame
@@ -309,7 +402,7 @@ sample buffer depth (design choice). Still TBD:
 3. Buffer overflow policy - `CFG_SAMPLE_BUFFER_OVERFLOW_POLICY` (behaviour while TBD: the newest sample is dropped and counted).
 4. LDO output check - TPS7A2033 output voltage not yet checked against its datasheet (PICO355-R3); hardware, no code constant.
 5. Cable pinout - X5 cable assumed straight 1:1, unverified; hardware, no code constant.
-6. HMI form beyond the plain text live view, log format, port discovery, refresh rate (`tbd.rs`); model default range for the HMI (`config.rs` `range`).
+6. HMI form, log format, port discovery and refresh rate: settled for the GUI, see "HMI GUI and HDF5 log" (`tbd.rs` keeps the old placeholders for `--cli`); still TBD there: native file picker, log rotation, real GPU/OpenGL run. Model default range for the HMI (`config.rs` `range`).
 7. CI pins. (`ADXL355_FIFO_CAPACITY` is settled: 96, cited.)
 
 ## Confirmed constants
@@ -339,6 +432,8 @@ Each module returns its own rc enum with a `*_NOT_IMPLEMENTED` code that stubs r
 HMI (`hmi/src/`): `protocol.rs` (`encode_command`, `encode_response`, `encode_sample_batch`, `decode_frame`, `crc16`, `Sample`, `Command`, `Response`, `Frame`),
 `link.rs` (`trait Transport`, `SerialTransport::open`), `config.rs` (`HmiConfig`, `Range`, `DEFAULT_ODR_HZ` = `tbd::DEFAULT_ODR_HZ`, module `link` = settled wire/serial constants),
 `live_view.rs` (`render`), `logger.rs` (`Logger::new`, `log_batch`, `open_file`), `tbd.rs` (constants), `main.rs` (CLI).
+GUI job modules (see "HMI GUI and HDF5 log"): `gui.rs` (eframe window, `run`), `worker.rs` (serial reader thread, command and event channels, `list_ports`),
+`samples.rs` (`SampleStore`, plot window in g), `scale.rs` (cited counts to g), `h5log.rs` (HDF5 writer thread); `lib.rs` lists them. `tbd.rs` is unchanged by this job.
 
 ## Requirement trace
 
