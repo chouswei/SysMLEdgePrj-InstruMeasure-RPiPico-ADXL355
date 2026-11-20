@@ -146,3 +146,38 @@ fn pending_ack_value_zero_scenario() {
     assert_eq!(p.take_acked(link::CMD_SET_ODR), Some(4000));
     assert_eq!(p.take_acked(link::CMD_SET_RANGE), Some(2));
 }
+
+use pico355_hmi::samples::EnvPoint;
+
+fn ep(t_s: f64, min_g: f64, max_g: f64) -> EnvPoint {
+    EnvPoint { t_s, min_g, max_g }
+}
+
+#[test]
+fn envelope_trace_empty() {
+    assert!(envelope_trace(&[]).is_empty());
+}
+
+#[test]
+fn envelope_trace_single_sample_bucket() {
+    assert_eq!(envelope_trace(&[ep(1.0, 0.5, 0.5)]), vec![[1.0, 0.5]]);
+}
+
+#[test]
+fn envelope_trace_keeps_both_peaks() {
+    assert_eq!(envelope_trace(&[ep(2.0, -0.25, 0.75)]), vec![[2.0, -0.25], [2.0, 0.75]]);
+}
+
+#[test]
+fn envelope_trace_multiple_buckets() {
+    let t = envelope_trace(&[ep(0.0, 0.0, 1.0), ep(0.5, 0.25, 0.25), ep(1.0, -1.0, 0.5)]);
+    assert_eq!(t, vec![[0.0, 0.0], [0.0, 1.0], [0.5, 0.25], [1.0, -1.0], [1.0, 0.5]]);
+    assert!(t.windows(2).all(|w| w[0][0] <= w[1][0]));
+}
+
+#[test]
+fn axis_colors_distinct() {
+    assert_ne!(axis_color(0), axis_color(1));
+    assert_ne!(axis_color(1), axis_color(2));
+    assert_ne!(axis_color(0), axis_color(2));
+}

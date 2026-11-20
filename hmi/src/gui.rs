@@ -12,11 +12,12 @@ use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
+use egui::Color32;
 use egui_plot::{Line, Plot, PlotPoints};
 
 use crate::config::link;
 use crate::h5log::{H5Logger, LogMeta, LoggedSample};
-use crate::samples::{SampleStore, DEFAULT_CAPACITY};
+use crate::samples::{EnvPoint, SampleStore, DEFAULT_CAPACITY};
 use crate::scale;
 use crate::worker::{self, PortInfo, Worker, WorkerCommand, WorkerEvent};
 
@@ -49,6 +50,29 @@ pub fn axis_label(axis: usize) -> &'static str {
         1 => "Y (g)",
         _ => "Z (g)",
     }
+}
+
+/// Single trace color for axis 0, 1, 2 (X, Y, Z): crisp red, green, blue. Any other index
+/// falls back to the Z color (matching `axis_label`).
+pub fn axis_color(axis: usize) -> Color32 {
+    match axis {
+        0 => Color32::from_rgb(230, 40, 40),
+        1 => Color32::from_rgb(20, 170, 60),
+        _ => Color32::from_rgb(40, 90, 240),
+    }
+}
+
+/// One continuous oscilloscope polyline from min/max buckets: a bucket with `min_g == max_g`
+/// gives one point `[t_s, min_g]`, otherwise `[t_s, min_g]` then `[t_s, max_g]`.
+pub fn envelope_trace(env: &[EnvPoint]) -> Vec<[f64; 2]> {
+    let mut out = Vec::with_capacity(env.len() * 2);
+    for p in env {
+        out.push([p.t_s, p.min_g]);
+        if p.min_g != p.max_g {
+            out.push([p.t_s, p.max_g]);
+        }
+    }
+    out
 }
 
 /// UTC civil time (year, month, day, hour, minute, second) from Unix seconds.
@@ -508,8 +532,7 @@ impl HmiApp {
         let h = ((ui.available_height() - 40.0) / 3.0).max(90.0);
         for axis in 0..3 {
             let env = self.store.envelope(window_s, PLOT_BUCKETS, axis);
-            let lo: PlotPoints = env.iter().map(|p| [p.t_s, p.min_g]).collect();
-            let hi: PlotPoints = env.iter().map(|p| [p.t_s, p.max_g]).collect();
+            let trace: PlotPoints = envelope_trace(&env).into_iter().collect();
             let mut plot = Plot::new(format!("plot{axis}"))
                 .height(h)
                 .y_axis_label(axis_label(axis))
@@ -527,8 +550,7 @@ impl HmiApp {
                 if let Some(t) = t_last {
                     p.set_plot_bounds_x((t - window_s)..=t);
                 }
-                p.line(Line::new("min", lo));
-                p.line(Line::new("max", hi));
+                p.line(Line::new(axis_label(axis), trace).color(axis_color(axis)));
             });
             match &stats {
                 Some(s) => ui.label(format!(
